@@ -1,4 +1,4 @@
-# Competitor Compare — mock-up (Step 0 + Phase 1)
+# Competitor Compare — mock-up
 
 ขั้นตอนเต็มอยู่ใน [`docs/mockup-steps.md`](docs/mockup-steps.md)
 
@@ -31,7 +31,12 @@ python -m core.llm
 streamlit run app.py
 ```
 
-กรอกชื่อคู่แข่ง 2–5 ราย แล้วกด "เริ่มวิเคราะห์"
+เลือกโหมดที่แถบด้านซ้าย:
+
+| โหมด | กรอก | ได้ผล |
+|---|---|---|
+| เทียบคู่แข่ง (Phase 1) | คู่แข่ง 2–5 ราย | ตาราง กราฟ และรายงานกลาง ๆ |
+| เรา vs คู่แข่ง (Phase 2) | บริษัทเรา + คู่แข่ง 2–5 ราย | เพิ่มแท็บ gap (เรา − ค่าเฉลี่ยคู่แข่ง) และรายงานพร้อมข้อเสนอแนะ |
 
 - ข้อมูลดิบ: `data/raw/{company}/{date}.json`
 - ฐานข้อมูล: `data/app.db`
