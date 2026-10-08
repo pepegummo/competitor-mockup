@@ -77,7 +77,8 @@ def now():
 
 # คอลัมน์ที่เพิ่มทีหลัง: DB เก่าจะถูกเพิ่มคอลัมน์ให้อัตโนมัติ
 MIGRATIONS = {
-    "companies": {"aliases": "TEXT", "play_app_id": "TEXT", "appstore_id": "TEXT", "set_symbol": "TEXT"},
+    "companies": {"aliases": "TEXT", "play_app_id": "TEXT", "appstore_id": "TEXT", "set_symbol": "TEXT",
+                  "appstore_name": "TEXT", "play_name": "TEXT", "disabled_sources": "TEXT"},
     "documents": {"source_name": "TEXT", "content": "TEXT", "rating": "INTEGER"},
 }
 
@@ -151,12 +152,13 @@ def get_companies(names):
         if n in rows:
             r = rows[n]
             r["aliases"] = json.loads(r["aliases"]) if r["aliases"] else []
+            r["disabled_sources"] = json.loads(r["disabled_sources"]) if r["disabled_sources"] else []
             out.append(r)
     return out
 
 
 def update_company_sources(name, aliases=None, play_app_id=None, appstore_id=None, website=None,
-                           set_symbol=None):
+                           set_symbol=None, appstore_name=None, play_name=None):
     """บันทึกการตั้งค่าแหล่งข้อมูลของบริษัท (สร้างบริษัทถ้ายังไม่มี)"""
     with connect() as conn:
         conn.execute("INSERT OR IGNORE INTO companies (name, role, origin) VALUES (?, 'competitor', 'user')",
@@ -164,11 +166,22 @@ def update_company_sources(name, aliases=None, play_app_id=None, appstore_id=Non
         conn.execute(
             # set_symbol: NULL = ยังไม่เคยหา (ระบบจะหาให้ตอนวิเคราะห์), '' = ไม่อยู่ในตลาด/ผู้ใช้ลบออก
             """UPDATE companies SET aliases = ?, play_app_id = ?, appstore_id = ?, website = ?,
-                 set_symbol = CASE WHEN ? != '' THEN ? WHEN set_symbol IS NULL THEN NULL ELSE '' END
+                 set_symbol = CASE WHEN ? != '' THEN ? WHEN set_symbol IS NULL THEN NULL ELSE '' END,
+                 appstore_name = ?, play_name = ?
                WHERE name = ?""",
             (json.dumps(aliases or [], ensure_ascii=False), play_app_id or None,
-             appstore_id or None, website or None, *[(set_symbol or "").strip().upper()] * 2, name),
+             appstore_id or None, website or None, *[(set_symbol or "").strip().upper()] * 2,
+             appstore_name or None, play_name or None, name),
         )
+
+
+def set_disabled_sources(name, keys):
+    """แหล่งที่ปิดไว้เฉพาะบริษัทนี้ (key จาก collect.SOURCES และ "financials")"""
+    with connect() as conn:
+        conn.execute("INSERT OR IGNORE INTO companies (name, role, origin) VALUES (?, 'competitor', 'user')",
+                     (name,))
+        conn.execute("UPDATE companies SET disabled_sources = ? WHERE name = ?",
+                     (json.dumps(sorted(set(keys))), name))
 
 
 def set_company_profile(name, set_symbol, aliases=None):

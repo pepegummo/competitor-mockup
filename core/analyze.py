@@ -157,15 +157,45 @@ def gap_table(df, table_b, self_name, reviews=None, fin=None):
     return pd.DataFrame(rows)
 
 
-def build_tables(company_ids):
-    """ตัวเลขทั้งหมดคิดด้วย pandas ไม่ให้ LLM นับเอง"""
-    """คืน (df ทุกแหล่งรวมรีวิว, ตาราง A, B, C ที่คิดจากข่าว + เว็บไซต์เท่านั้น)"""
+def load_df(company_ids):
+    """ทุกรายการที่จัดหมวดแล้วของบริษัทเหล่านี้ (ข่าว เว็บไซต์ ข่าวแจ้งตลาด รีวิว)"""
     df = db.facts_df(company_ids)
-    if df.empty:
-        return df, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    df["published_dt"] = pd.to_datetime(df["published_at"], errors="coerce", utc=True, format="mixed")
+    if not df.empty:
+        df["published_dt"] = pd.to_datetime(df["published_at"], errors="coerce", utc=True, format="mixed")
+    return df
+
+
+def apply_focus(df, focus):
+    """เหลือเฉพาะเรื่องที่สนใจ: ข่าวต้องอยู่ในหมวดที่เลือก (ถ้าเลือก) และ ทุกรายการต้องมีคำค้น (ถ้าใส่)
+    รีวิวไม่ถูกกรองด้วยหมวด เพราะรีวิวทุกอันอยู่หมวด review"""
+    focus = focus or {}
+    cats, words = focus.get("categories") or [], [w.lower() for w in focus.get("keywords") or []]
+    if df.empty or not (cats or words):
+        return df
+    keep = pd.Series(True, index=df.index)
+    if cats:
+        keep &= (df["source_type"] == "review") | df["category"].isin(cats)
+    if words:
+        text = (df["title"].fillna("") + " " + df["summary"].fillna("") + " " + df["content"].fillna("")).str.lower()
+        keep &= text.apply(lambda t: any(w in t for w in words))
+    return df[keep]
+
+
+def focus_label(focus, category_names=None):
+    focus = focus or {}
+    cats = [(category_names or {}).get(c, c) for c in focus.get("categories") or []]
+    return " · ".join(list(focus.get("keywords") or []) + cats)
+
+
+def build_tables(company_ids, focus=None):
+    """ตัวเลขทั้งหมดคิดด้วย pandas ไม่ให้ LLM นับเอง"""
+    return tables_from_df(apply_focus(load_df(company_ids), focus))
+
+
+def tables_from_df(df):
+    """คืน (df ทุกแหล่งรวมรีวิว, ตาราง A, B, C ที่คิดจากข่าว + เว็บไซต์เท่านั้น)"""
     news = news_only(df)
-    if news.empty:
+    if df.empty or news.empty:
         return df, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     table_a = pd.crosstab(news["company"], news["category"], margins=True, margins_name="รวม")
@@ -182,7 +212,9 @@ def build_tables(company_ids):
     return df, table_a, table_b, table_c
 
 
-def write_report(table_a, table_b, table_c, self_name=None, gap=None, mode=None, reviews=None, fin=None):
+def write_report(table_a, table_b, table_c, self_name=None, gap=None, mode=None, reviews=None, fin=None,
+                 scope=None):
+    """scope = ข้อความบอกว่าข้อมูลถูกกรองเฉพาะเรื่อง/ช่วงไหน (ให้ LLM เขียนเน้นเรื่องนั้น)"""
     """ไม่มี self_name = รายงานกลาง ๆ (phase1), มี self_name = มุมมองบริษัทเรา (phase2/phase3)"""
     tables = dict(a=table_a.to_markdown(), b=table_b.to_markdown(),
                   c=table_c.to_markdown(index=False))
@@ -193,6 +225,9 @@ def write_report(table_a, table_b, table_c, self_name=None, gap=None, mode=None,
     else:
         prompt = REPORT_PROMPT.format(**tables)
         mode = mode or "phase1"
+    if scope:
+        prompt += (f"\n\n[Scope: the tables above only include items about / filtered by: {scope}. "
+                   "Focus the report on this scope and say so in the first sentence.]")
     if reviews is not None and not reviews.empty:
         prompt += REVIEW_SECTION.format(r=reviews.to_markdown())
     if fin is not None and not fin.empty:

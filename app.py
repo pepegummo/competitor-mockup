@@ -1,44 +1,24 @@
 import json
-from contextlib import contextmanager
 
-import altair as alt
 import pandas as pd
-import requests
 import streamlit as st
 
 from core import analyze, collect, db, discover, llm, process, profile
-from core.sources import SourceSkipped, app_reviews, set_api
+from core.sources import SourceSkipped, set_api
+from ui import company_panel, results
+from ui.common import friendly_errors
+from ui.company_panel import ALL_SOURCES
+from ui.labels import CATEGORY_TH, FINANCIALS_KEY, MODES, SENTIMENT_TH
 
-CATEGORY_TH = {
-    "product_price": "สินค้า/ราคา",
-    "promotion": "โปรโมชัน",
-    "news_pr": "ข่าว/PR",
-    "review": "รีวิว",
-    "financial": "การเงิน",
-    "hr": "บุคลากร",
-    "other": "อื่น ๆ",
-}
-SENTIMENT_TH = {"positive": "บวก", "neutral": "กลาง", "negative": "ลบ"}
-SENTIMENT_COLORS = {"บวก": "#2e9e5b", "กลาง": "#9aa0a6", "ลบ": "#d9534f"}
-MODES = {
-    "compare": ("เทียบคู่แข่ง", "เทียบคู่แข่งกันเอง รายงานกลาง ๆ"),
-    "self": ("เรา vs คู่แข่ง", "มองจากมุมบริษัทเรา พร้อมข้อเสนอแนะ"),
-    "discover": ("หาคู่แข่งให้", "บอกแค่บริษัทเรา ระบบหาคู่แข่งให้แล้วให้คุณยืนยัน"),
-}
 DEFAULT_COMPANIES = ["AIS", "True", "NT"]
 LAST_RUN = db.DATA_DIR / "last_run.json"
-FINANCE_TH = {"revenue_yoy_pct": "รายได้โต (% YoY)", "net_profit_yoy_pct": "กำไรโต (% YoY)",
-              "net_margin_pct": "อัตรากำไรสุทธิ (%)", "ebitda_margin_pct": "อัตรา EBITDA (%)", "roe_pct": "ROE (%)"}
+FOCUS_CATEGORIES = ["product_price", "promotion", "news_pr", "financial", "hr"]
 
 st.set_page_config(page_title="Competitor Compare", page_icon="📊", layout="wide")
 db.init_db()
 
 
 # ---------- ข้อมูล ----------
-
-def fmt_time(iso):
-    return iso.replace("T", " ")[:16] if iso else "-"
-
 
 def load_last_run():
     try:
@@ -51,26 +31,22 @@ def save_last_run(**data):
     LAST_RUN.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
-def build_result(companies, report_row, self_name=None, mode="compare"):
-    """รวมทุกอย่างที่หน้าผลลัพธ์ต้องใช้ (ตัวเลขทั้งหมดมาจาก analyze)"""
+def build_result(companies, report_row, self_name=None, mode="compare", focus=None, report_scope=None):
+    """ข้อมูลของรอบวิเคราะห์ (กรองตามหัวข้อที่สนใจแล้ว) ตารางคิดใหม่ในหน้าผลลัพธ์ตามตัวกรอง"""
     ids = db.company_ids(companies)
-    df, table_a, table_b, table_c = analyze.build_tables(ids)
-    gap, reviews = pd.DataFrame(), pd.DataFrame()
-    fins = db.financials_by_company(ids)
-    fin = analyze.financial_table(fins) if fins else pd.DataFrame()
+    df = analyze.apply_focus(analyze.load_df(ids), focus)
     if not df.empty:
         df["หมวด"] = df["category"].map(CATEGORY_TH)
         df["น้ำเสียง"] = df["sentiment"].map(SENTIMENT_TH)
         df["วันที่"] = df["published_dt"].dt.strftime("%Y-%m-%d")
         df["แหล่ง"] = df["source_type"].map(collect.SOURCE_TYPE_LABEL)
-        reviews = analyze.review_table(df)
-        if self_name and not table_b.empty:
-            gap = analyze.gap_table(df, table_b, self_name, reviews, fin)
+    fins = db.financials_by_company(ids)
     return dict(
-        mode=mode, self_name=self_name, companies=companies,
-        df=df, a=table_a, b=table_b, c=table_c, gap=gap, reviews=reviews, fin=fin, fin_raw=fins,
-        report=report_row["content_md"], report_at=report_row["created_at"],
-        fetched_at=db.last_fetched_at(ids),
+        mode=mode, self_name=self_name, companies=companies, focus=focus or {},
+        focus_label=analyze.focus_label(focus, CATEGORY_TH), df=df,
+        fin=analyze.financial_table(fins) if fins else pd.DataFrame(), fin_raw=fins,
+        report=report_row["content_md"], report_at=report_row["created_at"], report_id=report_row["id"],
+        report_scope=report_scope, fetched_at=db.last_fetched_at(ids),
     )
 
 
@@ -81,15 +57,31 @@ def restore_last_result():
     report = db.get_report(last.get("report_id"))
     if not report or not db.company_ids(last.get("companies", [])):
         return None
-    return build_result(last["companies"], report, last.get("self_name"), last.get("mode", "compare"))
+    return build_result(last["companies"], report, last.get("self_name"), last.get("mode", "compare"),
+                        last.get("focus"), last.get("report_scope"))
 
 
-def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare", opts=None):
+def remember(res):
+    save_last_run(companies=res["companies"], report_id=res["report_id"], self_name=res["self_name"],
+                  mode=res["mode"], focus=res["focus"], report_scope=res["report_scope"])
+
+
+def on_new_report(report_row, scope):
+    """ผู้ใช้กดเขียนรายงานใหม่ตามตัวกรอง"""
+    res = st.session_state.result
+    res.update(report=report_row["content_md"], report_at=report_row["created_at"],
+               report_id=report_row["id"], report_scope=scope)
+    remember(res)
+
+
+def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare", opts=None, focus=None):
     """self_name=None → Phase 1, มี self_name → Phase 2 (เรา vs คู่แข่ง)
-    opts = {"sources": [...], "fulltext": bool, "review_limit": int} จากแถบ "แหล่งข้อมูล" """
+    opts = {"sources", "fulltext", "review_limit", "financials"} จากแถบซ้าย
+    focus = {"categories", "keywords"} หัวข้อที่สนใจ: ค้นข่าวเพิ่ม และวิเคราะห์เฉพาะเรื่องนั้น"""
     origins = origins or {}
-    opts = opts or {"sources": ["google_news"], "fulltext": False, "review_limit": 20}
+    opts = opts or {"sources": ["google_news"], "fulltext": False, "review_limit": 20, "financials": False}
     companies = ([self_name] if self_name else []) + competitors
+    focus_text = analyze.focus_label(focus, CATEGORY_TH)
     calls_before = llm.call_count
     with st.status("กำลังวิเคราะห์...", expanded=True) as status:
         ids = []
@@ -100,17 +92,23 @@ def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare
                 ids.append(db.upsert_company(name, role="competitor", origin=origins.get(name, "user")))
 
         labels = [collect.SOURCES[k][1] for k in opts["sources"]]
-        st.write(f"**1/3 ดึงข้อมูล** ({', '.join(labels)})")
+        st.write(f"**1/3 ดึงข้อมูล** ({', '.join(labels)})"
+                 + (f" · ค้นเพิ่มเรื่อง: {', '.join(collect.topic_queries(focus))}" if focus_text else ""))
         if "set_news" in opts["sources"] or opts.get("financials"):
             lookup_symbols(companies)
         if opts["fulltext"]:
             status.update(label="ดึงข้อมูลและเนื้อหาเต็ม (อาจใช้เวลาหลายนาที)...")
         empty = []
-        for cid, name in zip(ids, companies):
-            stats, notes = collect.collect_company(cid, name, limit=limit, sources=opts["sources"],
-                                                   fulltext_on=opts["fulltext"], review_limit=opts["review_limit"])
+        for cid, row in zip(ids, db.get_companies(companies)):
+            name = row["name"]
+            sources = company_panel.enabled_sources(row, opts["sources"])
+            stats, notes = collect.collect_company(cid, name, limit=limit, sources=sources,
+                                                   fulltext_on=opts["fulltext"], review_limit=opts["review_limit"],
+                                                   focus=focus)
             parts = [f"{label} {n} (ใหม่ {a})" for label, (n, a) in stats.items()]
-            st.write(f"- **{name}**: " + (" · ".join(parts) or "ไม่มีแหล่งที่ใช้ได้"))
+            off = [collect.SOURCES[k][1] for k in opts["sources"] if k not in sources]
+            st.write(f"- **{name}**: " + (" · ".join(parts) or "ไม่มีแหล่งที่ใช้ได้")
+                     + (f" · ปิดไว้: {', '.join(off)}" if off else ""))
             for note in notes:
                 st.caption(f"  {name} · {note}")
             if sum(n for label, (n, a) in stats.items() if label != "รีวิวแอป") == 0:
@@ -124,9 +122,13 @@ def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare
         if skipped:
             st.write(f"- ข้าม {skipped} ชุดที่ LLM ตอบรูปแบบไม่ถูก กดวิเคราะห์อีกครั้งเพื่อลองใหม่")
 
-        df, table_a, table_b, table_c = analyze.build_tables(ids)
+        all_df = analyze.load_df(ids)
+        df, table_a, table_b, table_c = analyze.tables_from_df(analyze.apply_focus(all_df, focus))
+        if focus_text:
+            st.write(f"- วิเคราะห์เฉพาะเรื่อง **{focus_text}**: {len(df)} รายการจาก {len(all_df)}")
         if table_a.empty:
-            status.update(label="ไม่พบข่าวของบริษัทที่เลือก", state="error")
+            status.update(label="ไม่พบข่าวของบริษัทที่เลือก" + (" ในเรื่องที่สนใจ" if focus_text else ""),
+                          state="error")
             return None, empty
 
         status.update(label="เขียนรายงาน...")
@@ -141,13 +143,14 @@ def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare
             st.write(f"- ไม่มีข่าวพอเทียบกับ {self_name} จึงเขียนรายงานแบบเทียบคู่แข่งแทน")
             self_name, report_mode = None, "phase1"
         analyze.write_report(table_a, table_b, table_c, self_name=self_name, gap=gap, mode=report_mode,
-                             reviews=reviews, fin=fin)
+                             reviews=reviews, fin=fin, scope=focus_text or None)
         report = db.latest_report(report_mode)
         status.update(label=f"วิเคราะห์เสร็จ · เรียก LLM {llm.call_count - calls_before} ครั้ง",
                       state="complete", expanded=False)
 
-    save_last_run(companies=companies, report_id=report["id"], self_name=self_name, mode=mode)
-    return build_result(companies, report, self_name, mode), empty
+    res = build_result(companies, report, self_name, mode, focus)
+    remember(res)
+    return res, empty
 
 
 def lookup_symbols(companies):
@@ -165,13 +168,15 @@ def lookup_symbols(companies):
     st.write("- ชื่อหุ้น SET ที่ระบบหาให้: " + " · ".join(
         f"{n} → {profiles.get(n, {}).get('set_symbol') or 'ไม่อยู่ในตลาด'}" for n in missing)
         + " (ถ้าผิดแก้ได้ใน “แหล่งข้อมูลของแต่ละบริษัท”)")
-    st.session_state.pop("source_draft", None)  # ให้ตารางตั้งค่าแสดงค่าใหม่
 
 
 def fetch_financials(ids, companies):
     """ดึงงบการเงินล่าสุดจาก SET ของบริษัทที่ใส่ชื่อหุ้นไว้ แล้วเก็บลง DB"""
     st.write("**งบการเงิน (SET)**")
     for cid, row in zip(ids, db.get_companies(companies)):
+        if FINANCIALS_KEY in row["disabled_sources"]:
+            st.caption(f"  {row['name']} · ปิดงบการเงินไว้สำหรับบริษัทนี้")
+            continue
         if not row.get("set_symbol"):
             st.caption(f"  {row['name']} · ไม่มีงบ (ไม่อยู่ในตลาดหลักทรัพย์ฯ หรือยังไม่ได้ใส่ชื่อหุ้น)")
             continue
@@ -186,454 +191,20 @@ def fetch_financials(ids, companies):
                  + (f" ([ไฟล์งบ]({filed}))" if filed else ""))
 
 
-# ---------- กราฟ ----------
-
-def company_opacity(self_name):
-    """ถ้ามีบริษัทเรา ให้แถบของเราเข้ม คู่แข่งจางลง"""
-    if not self_name:
-        return alt.value(1)
-    return alt.condition(alt.datum.company == self_name, alt.value(1), alt.value(0.45))
-
-
-def sentiment_chart(table_b, self_name=None):
-    long = (table_b.rename(columns=SENTIMENT_TH).reset_index()
-            .melt(id_vars="company", var_name="น้ำเสียง", value_name="สัดส่วน (%)"))
-    long["ลำดับ"] = long["น้ำเสียง"].map({"บวก": 0, "กลาง": 1, "ลบ": 2})
-    order = ([self_name] if self_name else []) + [c for c in table_b.index if c != self_name]
-    return (alt.Chart(long).mark_bar()
-            .encode(
-                x=alt.X("สัดส่วน (%):Q", stack="normalize", axis=alt.Axis(format="%", title=None)),
-                y=alt.Y("company:N", title=None, sort=order),
-                color=alt.Color("น้ำเสียง:N",
-                                scale=alt.Scale(domain=list(SENTIMENT_COLORS), range=list(SENTIMENT_COLORS.values())),
-                                legend=alt.Legend(orient="bottom", title=None)),
-                opacity=company_opacity(self_name),
-                order="ลำดับ:Q",
-                tooltip=["company", "น้ำเสียง", "สัดส่วน (%)"],
-            )
-            .properties(height=60 + 40 * len(table_b)))
-
-
-def category_chart(df, self_name=None):
-    counts = df.groupby(["company", "หมวด"]).size().reset_index(name="จำนวนข่าว")
-    order = [v for v in CATEGORY_TH.values() if v in set(counts["หมวด"])]
-    companies = ([self_name] if self_name else []) + sorted(c for c in counts["company"].unique() if c != self_name)
-    return (alt.Chart(counts).mark_bar()
-            .encode(
-                x=alt.X("หมวด:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
-                xOffset=alt.XOffset("company:N", sort=companies),
-                y=alt.Y("จำนวนข่าว:Q", title="จำนวนข่าว"),
-                color=alt.Color("company:N", title="บริษัท", sort=companies,
-                                legend=alt.Legend(orient="bottom")),
-                opacity=company_opacity(self_name),
-                tooltip=["company", "หมวด", "จำนวนข่าว"],
-            )
-            .properties(height=340))
-
-
-def gap_chart(gap, kind, self_name):
-    data = gap[gap["type"] == kind].copy()
-    labels = CATEGORY_TH if kind == "category" else SENTIMENT_TH
-    data["รายการ"] = data["item"].map(labels)
-    if kind == "category":
-        # หมวด: มาก/น้อยกว่าไม่ได้แปลว่าดี/แย่ แค่บอกว่าเราเน้นต่างจากคู่แข่ง
-        data["ผล"] = data["gap_pts"].map(lambda g: f"{self_name} เน้นมากกว่า" if g >= 0 else f"{self_name} เน้นน้อยกว่า")
-        domain = [f"{self_name} เน้นมากกว่า", f"{self_name} เน้นน้อยกว่า"]
-        colors = ["#2557a7", "#e08a2b"]
-    else:
-        # น้ำเสียง: ข่าวบวกมากกว่า = ดี, ข่าวลบมากกว่า = แย่
-        good = data.apply(lambda r: r["gap_pts"] >= 0 if r["item"] != "negative" else r["gap_pts"] <= 0, axis=1)
-        data["ผล"] = good.map({True: "ดีกว่าคู่แข่ง", False: "แย่กว่าคู่แข่ง"})
-        domain, colors = ["ดีกว่าคู่แข่ง", "แย่กว่าคู่แข่ง"], ["#2e9e5b", "#d9534f"]
-    return (alt.Chart(data).mark_bar()
-            .encode(
-                x=alt.X("gap_pts:Q", title="ส่วนต่าง (จุด %)"),
-                y=alt.Y("รายการ:N", title=None, sort=list(labels.values())),
-                color=alt.Color("ผล:N", scale=alt.Scale(domain=domain, range=colors),
-                                legend=alt.Legend(orient="bottom", title=None)),
-                tooltip=[alt.Tooltip("รายการ:N"), alt.Tooltip("us_pct:Q", title="เรา (%)"),
-                         alt.Tooltip("competitor_avg_pct:Q", title="คู่แข่งเฉลี่ย (%)"),
-                         alt.Tooltip("gap_pts:Q", title="ส่วนต่าง (จุด)")],
-            )
-            .properties(height=40 + 32 * len(data)))
-
-
-# ---------- ส่วนแสดงผล ----------
+# ---------- ส่วนประกอบหน้า ----------
 
 def empty_state():
-    st.info("เลือกโหมดและบริษัทที่แถบด้านซ้าย แล้วกด **เริ่มวิเคราะห์**")
+    st.info("ทำตาม 3 ขั้นที่แถบด้านซ้าย แล้วกด **เริ่มวิเคราะห์**")
     cols = st.columns(3)
     steps = [
-        ("1. ดึงข้อมูล", "ดึงข่าว รีวิวแอป ข่าวแจ้งตลาด และงบการเงินล่าสุดจาก SET ของแต่ละบริษัท"),
+        ("1. ดึงข้อมูล", "ข่าว ข่าวแจ้งตลาด รีวิวแอป และงบการเงินล่าสุดจาก SET ของแต่ละบริษัท"),
         ("2. จัดหมวด", "ให้ LLM แยกหมวดและน้ำเสียงข่าว (บวก/กลาง/ลบ) ข่าวที่เคยจัดแล้วจะไม่ถูกส่งซ้ำ"),
-        ("3. สรุปผล", "นับตัวเลขเปรียบเทียบ แล้วให้ LLM เขียนรายงานจากตัวเลขนั้น"),
+        ("3. สรุปผล", "นับตัวเลขเปรียบเทียบ แล้วให้ LLM เขียนรายงานจากตัวเลขนั้น กรองดูผลได้ละเอียด"),
     ]
     for col, (title, text) in zip(cols, steps):
         with col.container(border=True):
             st.markdown(f"**{title}**")
             st.caption(text)
-
-
-def kpi_cards(res):
-    df, table_b, self_name = res["df"], res["b"], res["self_name"]
-    competitors = [c for c in res["companies"] if c != self_name and c in table_b.index]
-    cols = st.columns(len(res["companies"]))
-    for col, name in zip(cols, res["companies"]):
-        with col.container(border=True):
-            is_self = name == self_name
-            st.markdown(f"#### {name}" + ("  :blue-badge[บริษัทเรา]" if is_self else ""))
-            sub = analyze.news_only(df)[lambda d: d["company"] == name]
-            if sub.empty or name not in table_b.index:
-                st.caption("ไม่พบข่าว")
-                continue
-            pos, neg = table_b.loc[name, "positive"], table_b.loc[name, "negative"]
-            pos_delta = neg_delta = None
-            if is_self and competitors:
-                pos_delta = f"{pos - table_b.loc[competitors, 'positive'].mean():+.0f} จุด"
-                neg_delta = f"{neg - table_b.loc[competitors, 'negative'].mean():+.0f} จุด"
-            c1, c2, c3 = st.columns(3)
-            c1.metric("ข่าว", len(sub))
-            c2.metric("บวก", f"{pos:.0f}%", pos_delta)
-            c3.metric("ลบ", f"{neg:.0f}%", neg_delta, delta_color="inverse")
-            top = sub["หมวด"].value_counts()
-            st.caption(f"เน้นมากที่สุด: **{top.index[0]}** ({top.iloc[0]} ข่าว)")
-            reviews = res.get("reviews", pd.DataFrame())
-            if not reviews.empty and name in reviews.index:
-                r = reviews.loc[name]
-                st.caption(f"รีวิวแอป ★ **{r['avg_stars']:.1f}** จาก {int(r['reviews'])} รีวิว "
-                           f"(รีวิวลบ {r['negative_pct']:.0f}%)")
-            fin = res.get("fin", pd.DataFrame())
-            if not fin.empty and name in fin.index and pd.notna(fin.loc[name, "revenue_mb"]):
-                f = fin.loc[name]
-                growth = [f"{label} {f[col]:+.1f}%" for label, col in
-                          (("รายได้", "revenue_yoy_pct"), ("กำไร", "net_profit_yoy_pct")) if pd.notna(f[col])]
-                st.caption(f"งบ {f['period']}: รายได้ **{f['revenue_mb']:,.0f} ลบ.**"
-                           + (f" · YoY {' · '.join(growth)}" if growth else ""))
-            if is_self and competitors:
-                st.caption("ตัวเลขใต้ % คือส่วนต่างจากค่าเฉลี่ยคู่แข่ง")
-
-
-def downloads(res):
-    df = res["df"]
-    csv = (df[["วันที่", "company", "แหล่ง", "source_name", "หมวด", "น้ำเสียง", "rating", "title", "summary", "url"]]
-           .rename(columns={"company": "บริษัท", "source_name": "ที่มา", "rating": "ดาว",
-                            "title": "หัวข้อ", "summary": "สรุป", "url": "ลิงก์"})
-           .to_csv(index=False).encode("utf-8-sig"))  # BOM ให้ Excel อ่านไทยได้
-    c1, c2, _ = st.columns([1, 1, 3])
-    c1.download_button("ดาวน์โหลดรายงาน (.md)", res["report"], "report.md", "text/markdown",
-                       icon=":material/description:", width="stretch", on_click="ignore")
-    c2.download_button("ดาวน์โหลดข้อมูล (.csv)", csv, "data.csv", "text/csv",
-                       icon=":material/table:", width="stretch", on_click="ignore")
-
-
-def tab_summary(res):
-    left, right = st.columns([3, 2], gap="large")
-    with left:
-        title = f"ข้อเสนอแนะสำหรับ {res['self_name']}" if res["self_name"] else "รายงานสรุป"
-        st.markdown(f"##### {title}")
-        st.markdown(res["report"])
-        st.caption(f"เขียนโดย LLM เมื่อ {fmt_time(res['report_at'])} จากตัวเลขในแท็บอื่นเท่านั้น")
-    with right:
-        st.markdown("##### น้ำเสียงข่าว")
-        st.altair_chart(sentiment_chart(res["b"], res["self_name"]), width="stretch")
-        st.dataframe(res["b"].rename(columns=SENTIMENT_TH).rename_axis("บริษัท").map(lambda v: f"{v:.1f}%"),
-                     width="stretch")
-
-
-def tab_gap(res):
-    gap, self_name = res["gap"], res["self_name"]
-    st.caption(f"{self_name} เทียบกับค่าเฉลี่ยของคู่แข่ง หมวดข่าวคิดเป็น % ของข่าวทั้งหมดของแต่ละบริษัท "
-               "จึงเทียบกันได้แม้จำนวนข่าวไม่เท่ากัน")
-    left, right = st.columns(2, gap="large")
-    with left:
-        st.markdown("##### หมวดข่าว: เราเน้นต่างจากคู่แข่งตรงไหน")
-        st.altair_chart(gap_chart(gap, "category", self_name), width="stretch")
-    with right:
-        st.markdown("##### น้ำเสียงข่าว: เราดีหรือแย่กว่า")
-        st.altair_chart(gap_chart(gap, "sentiment", self_name), width="stretch")
-    table = gap.copy()
-    table["type"] = table["type"].map({"category": "หมวด", "sentiment": "น้ำเสียง", "review": "รีวิวแอป",
-                                       "finance": "การเงิน"})
-    table["item"] = table["item"].map({**CATEGORY_TH, **SENTIMENT_TH, **FINANCE_TH,
-                                       "avg_stars": "คะแนนเฉลี่ย (ดาว)", "negative_pct": "รีวิวลบ (%)"})
-    st.dataframe(
-        table.rename(columns={"type": "ประเภท", "item": "รายการ", "us_pct": f"{self_name} (%)",
-                              "competitor_avg_pct": "คู่แข่งเฉลี่ย (%)", "gap_pts": "ส่วนต่าง (จุด)"}),
-        hide_index=True, width="stretch",
-    )
-    if (gap["type"] == "review").any():
-        st.caption("แถวรีวิวแอป: คะแนนเฉลี่ยเป็นดาว (1–5) ไม่ใช่ % ส่วนรีวิวลบยิ่งน้อยยิ่งดี")
-    if (gap["type"] == "finance").any():
-        st.caption("แถวการเงิน: เทียบเฉพาะคู่แข่งที่จดทะเบียนในตลาดหลักทรัพย์ฯ ดูรายละเอียดในแท็บ “งบการเงิน”")
-
-
-def tab_categories(res):
-    st.altair_chart(category_chart(analyze.news_only(res["df"]), res["self_name"]), width="stretch")
-    table_a = res["a"].rename(columns=CATEGORY_TH).rename_axis(index="บริษัท", columns=None)
-    st.dataframe(table_a, width="stretch")
-    st.caption("ตัวเลขคือจำนวนข่าว แถวและคอลัมน์ “รวม” คือผลรวม")
-
-
-def tab_latest(res):
-    c = res["c"].copy()
-    c["category"] = c["category"].map(CATEGORY_TH)
-    c["sentiment"] = c["sentiment"].map(SENTIMENT_TH)
-    c = c.rename(columns={"company": "บริษัท", "date": "วันที่", "category": "หมวด",
-                          "sentiment": "น้ำเสียง", "summary": "สรุป"})
-    st.dataframe(c, hide_index=True, width="stretch")
-
-
-def tab_reviews(res):
-    df, reviews = res["df"], res["reviews"]
-    r = df[df["source_type"] == "review"]
-    st.caption("รีวิวล่าสุดจาก App Store และ Google Play ของแอปที่ตั้งค่าไว้ในแต่ละบริษัท "
-               "คะแนนดาวมาจากผู้รีวิวโดยตรง ส่วนน้ำเสียงและสรุปมาจาก LLM")
-    left, right = st.columns(2, gap="large")
-    with left:
-        st.markdown("##### คะแนนเฉลี่ย (ดาว)")
-        stars = r.groupby(["company", "source_name"])["rating"].mean().round(2).reset_index()
-        st.altair_chart(
-            alt.Chart(stars).mark_bar().encode(
-                x=alt.X("rating:Q", title="ดาวเฉลี่ย", scale=alt.Scale(domain=[0, 5])),
-                y=alt.Y("company:N", title=None),
-                yOffset="source_name:N",
-                color=alt.Color("source_name:N", title=None, legend=alt.Legend(orient="bottom")),
-                opacity=company_opacity(res["self_name"]),
-                tooltip=["company", "source_name", "rating"],
-            ).properties(height=60 + 50 * stars["company"].nunique()),
-            width="stretch")
-    with right:
-        st.markdown("##### น้ำเสียงของรีวิว")
-        sent = (pd.crosstab(r["company"], r["sentiment"], normalize="index") * 100).round(1)
-        sent = sent.reindex(columns=["positive", "neutral", "negative"], fill_value=0)
-        st.altair_chart(sentiment_chart(sent, res["self_name"]), width="stretch")
-    st.dataframe(
-        reviews.rename(columns={"reviews": "จำนวนรีวิว", "avg_stars": "ดาวเฉลี่ย",
-                                "avg_stars_app_store": "App Store", "avg_stars_google_play": "Google Play",
-                                "positive_pct": "รีวิวบวก (%)", "negative_pct": "รีวิวลบ (%)"})
-               .rename_axis("บริษัท"),
-        width="stretch")
-    st.markdown("##### รีวิวล่าสุด")
-    st.dataframe(
-        r.sort_values("published_dt", ascending=False),
-        hide_index=True, width="stretch", height=420,
-        column_order=["วันที่", "company", "source_name", "rating", "น้ำเสียง", "content", "summary"],
-        column_config={
-            "company": st.column_config.TextColumn("บริษัท"),
-            "source_name": st.column_config.TextColumn("สโตร์"),
-            "rating": st.column_config.NumberColumn("ดาว", format="%d ★"),
-            "content": st.column_config.TextColumn("รีวิว", width="large"),
-            "summary": st.column_config.TextColumn("สรุป", width="medium"),
-        },
-    )
-
-
-def tab_finance(res):
-    fin, raw, self_name = res["fin"], res["fin_raw"], res["self_name"]
-    missing = [c for c in res["companies"] if c not in fin.index]
-    fetched = max(f["fetched_at"] for f in raw.values())
-    as_of = max(f["market"].get("as_of") or "" for f in raw.values())
-    st.caption(f"งบรวมที่บริษัทยื่นต่อตลาดหลักทรัพย์ฯ ดึงจาก set.or.th เมื่อ {fmt_time(fetched)} · "
-               f"ข้อมูลราคาหุ้น ณ {as_of} · ตัวเงินหน่วยล้านบาท (ลบ.)"
-               + (f" · ไม่มีงบ: {', '.join(missing)} (ไม่ได้จดทะเบียน หรือยังไม่ได้ใส่ชื่อหุ้น)" if missing else ""))
-    order = ([self_name] if self_name in fin.index else []) + [c for c in fin.index if c != self_name]
-
-    left, right = st.columns(2, gap="large")
-    with left:
-        st.markdown("##### รายได้และกำไรสุทธิรายปี")
-        hist = pd.DataFrame([{**h, "company": name} for name, f in raw.items() for h in f["history"]
-                             if h["period"] == "ทั้งปี"])
-        if not hist.empty:
-            long = hist.melt(id_vars=["company", "year"], value_vars=["revenue", "net_profit"],
-                             var_name="ตัวเลข", value_name="ล้านบาท")
-            long["ตัวเลข"] = long["ตัวเลข"].map({"revenue": "รายได้รวม", "net_profit": "กำไรสุทธิ"})
-            st.altair_chart(
-                alt.Chart(long).mark_bar().encode(
-                    x=alt.X("year:O", title=None, axis=alt.Axis(labelAngle=0)),
-                    xOffset=alt.XOffset("company:N", sort=order),
-                    y=alt.Y("ล้านบาท:Q", title="ล้านบาท"),
-                    color=alt.Color("company:N", title="บริษัท", sort=order, legend=alt.Legend(orient="bottom")),
-                    opacity=company_opacity(self_name),
-                    row=alt.Row("ตัวเลข:N", title=None, sort=["รายได้รวม", "กำไรสุทธิ"]),
-                    tooltip=["company", "year", "ตัวเลข", alt.Tooltip("ล้านบาท:Q", format=",.0f")],
-                ).properties(height=170).resolve_scale(y="independent"),
-                width="stretch")
-    with right:
-        st.markdown("##### เทียบงบรอบล่าสุด (%)")
-        cols = list(FINANCE_TH)
-        ratios = (fin[cols].rename(columns=FINANCE_TH).reset_index()
-                  .melt(id_vars="company", var_name="ตัวชี้วัด", value_name="%").dropna())
-        st.altair_chart(
-            alt.Chart(ratios).mark_bar().encode(
-                x=alt.X("%:Q", title="%"),
-                y=alt.Y("ตัวชี้วัด:N", title=None, sort=list(FINANCE_TH.values())),
-                yOffset=alt.YOffset("company:N", sort=order),
-                color=alt.Color("company:N", title="บริษัท", sort=order, legend=alt.Legend(orient="bottom")),
-                opacity=company_opacity(self_name),
-                tooltip=["company", "ตัวชี้วัด", alt.Tooltip("%:Q", format=".1f")],
-            ).properties(height=60 + 22 * len(ratios)),
-            width="stretch")
-        st.caption("YoY เทียบช่วงเดียวกันของปีก่อน · ROE มาจากงบทั้งปีล่าสุด · "
-                   "การเติบโตที่ฐานปีก่อนขาดทุนจะไม่แสดง")
-
-    st.dataframe(
-        fin.loc[order], width="stretch",
-        column_config={
-            "company": st.column_config.TextColumn("บริษัท"),
-            "period": st.column_config.TextColumn("งบรอบ"),
-            "revenue_mb": st.column_config.NumberColumn("รายได้รวม (ลบ.)", format="localized"),
-            "revenue_yoy_pct": st.column_config.NumberColumn("รายได้โต (%)", format="%+.1f"),
-            "net_profit_mb": st.column_config.NumberColumn("กำไรสุทธิ (ลบ.)", format="localized"),
-            "net_profit_yoy_pct": st.column_config.NumberColumn("กำไรโต (%)", format="%+.1f"),
-            "net_margin_pct": st.column_config.NumberColumn("อัตรากำไรสุทธิ (%)", format="%.1f"),
-            "ebitda_margin_pct": st.column_config.NumberColumn("อัตรา EBITDA (%)", format="%.1f"),
-            "fy": st.column_config.NumberColumn("ปีงบ (ROE, D/E)", format="%d"),
-            "roe_pct": st.column_config.NumberColumn("ROE (%)", format="%.1f"),
-            "de_ratio": st.column_config.NumberColumn("D/E (เท่า)", format="%.2f"),
-            "market_cap_mb": st.column_config.NumberColumn("มูลค่าตลาด (ลบ.)", format="localized"),
-            "pe": st.column_config.NumberColumn("P/E (เท่า)", format="%.1f"),
-            "dividend_yield_pct": st.column_config.NumberColumn("ปันผล (%)", format="%.2f"),
-        },
-    )
-    links = [f"[{f['symbol']} {f['latest']['period']}]({f['latest']['filed_url']})"
-             for f in raw.values() if f["latest"].get("filed_url")]
-    if links:
-        st.caption("งบฉบับเต็ม (zip): " + " · ".join(links))
-
-
-def tab_all_news(res):
-    df = res["df"]
-    f0, f1, f2, f3, f4 = st.columns([1, 1, 1, 1, 1.4])
-    srcs = f0.multiselect("แหล่ง", [v for v in collect.SOURCE_TYPE_LABEL.values() if v in set(df["แหล่ง"])],
-                          key="f_src", placeholder="ทั้งหมด")
-    companies = f1.multiselect("บริษัท", res["companies"], key="f_company", placeholder="ทั้งหมด")
-    cats = f2.multiselect("หมวด", [v for v in CATEGORY_TH.values() if v in set(df["หมวด"])],
-                          key="f_cat", placeholder="ทั้งหมด")
-    sents = f3.multiselect("น้ำเสียง", list(SENTIMENT_COLORS), key="f_sent", placeholder="ทั้งหมด")
-    query = f4.text_input("ค้นหาในหัวข้อ/สรุป", key="f_q", placeholder="เช่น 5G, กำไร")
-
-    view = df
-    if srcs:
-        view = view[view["แหล่ง"].isin(srcs)]
-    if companies:
-        view = view[view["company"].isin(companies)]
-    if cats:
-        view = view[view["หมวด"].isin(cats)]
-    if sents:
-        view = view[view["น้ำเสียง"].isin(sents)]
-    if query:
-        q = query.strip().lower()
-        view = view[view["title"].str.lower().str.contains(q, regex=False)
-                    | view["summary"].str.lower().str.contains(q, regex=False)]
-
-    st.caption(f"แสดง {len(view)} จาก {len(df)} รายการ")
-    st.dataframe(
-        view.sort_values("published_dt", ascending=False),
-        hide_index=True, width="stretch", height=480,
-        column_order=["วันที่", "company", "แหล่ง", "source_name", "หมวด", "น้ำเสียง", "title", "summary", "url"],
-        column_config={
-            "company": st.column_config.TextColumn("บริษัท"),
-            "source_name": st.column_config.TextColumn("ที่มา"),
-            "title": st.column_config.TextColumn("หัวข้อ", width="large"),
-            "summary": st.column_config.TextColumn("สรุป", width="large"),
-            "url": st.column_config.LinkColumn("ลิงก์", display_text="เปิด"),
-        },
-    )
-
-
-def show_results(res):
-    counts = res["df"]["แหล่ง"].value_counts()
-    st.caption(f"{' · '.join(res['companies'])} · "
-               + " · ".join(f"{label} {n}" for label, n in counts.items())
-               + f" · อัปเดตล่าสุด {fmt_time(res['fetched_at'])}")
-    kpi_cards(res)
-    downloads(res)
-
-    has_gap = res["self_name"] and not res["gap"].empty
-    has_reviews = not res.get("reviews", pd.DataFrame()).empty
-    has_fin = not res.get("fin", pd.DataFrame()).empty
-    tabs = (["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + (["งบการเงิน"] if has_fin else [])
-            + ["หมวดข่าว"] + (["รีวิวแอป"] if has_reviews else []) + ["ข่าวล่าสุด", "ข้อมูลทั้งหมด"])
-    renderers = ([tab_summary] + ([tab_gap] if has_gap else []) + ([tab_finance] if has_fin else [])
-                 + [tab_categories] + ([tab_reviews] if has_reviews else []) + [tab_latest, tab_all_news])
-    for tab, render in zip(st.tabs(tabs), renderers):
-        with tab:
-            render(res)
-
-
-# ---------- ตั้งค่าแหล่งข้อมูลของแต่ละบริษัท ----------
-
-SOURCE_COLS = {"name": "บริษัท", "aliases": "ชื่อที่ใช้ค้นในข่าว (คั่นด้วย ,)", "set_symbol": "ชื่อหุ้น SET",
-               "appstore_id": "App Store id",
-               "play_app_id": "Google Play id", "website": "URL หน้าข่าว/โปรโมชันของบริษัท"}
-
-
-def source_settings(names):
-    """ตารางแก้ไขชื่อเรียก แอป และเว็บไซต์ของบริษัทที่เลือก พร้อมปุ่มหาอัตโนมัติ"""
-    if not names:
-        return
-    with st.expander("แหล่งข้อมูลของแต่ละบริษัท (ชื่อเรียก, ชื่อหุ้น, แอป, เว็บไซต์)"):
-        st.caption("ใช้กับแหล่ง “สำนักข่าวไทย” (จับข่าวจากชื่อเรียก), “ข่าวแจ้งตลาด SET” และงบการเงิน (ชื่อหุ้น), "
-                   "“รีวิวแอป” และ “เว็บไซต์บริษัท” กดหาอัตโนมัติแล้วตรวจก่อนบันทึก "
-                   "เพราะแอปหรือชื่อหุ้นที่หาได้อาจไม่ใช่ของบริษัทนั้น บริษัทนอกตลาดให้เว้นชื่อหุ้นว่าง")
-        if st.session_state.get("source_draft", {}).get("names") != names:
-            # บริษัทที่ยังไม่มีใน DB แสดงเป็นแถวว่าง จะถูกสร้างเมื่อกดบันทึก
-            saved = {r["name"]: r for r in db.get_companies(names)}
-            empty = {"aliases": [], "set_symbol": None, "appstore_id": None, "play_app_id": None, "website": None}
-            st.session_state.source_draft = {"names": names, "rows": [
-                {"name": n, "aliases": ", ".join(r["aliases"]), "set_symbol": r["set_symbol"] or "",
-                 "appstore_id": r["appstore_id"] or "",
-                 "play_app_id": r["play_app_id"] or "", "website": r["website"] or ""}
-                for n in names for r in [saved.get(n, empty)]]}
-        draft = st.session_state.source_draft
-
-        c1, c2, _ = st.columns([1.6, 1, 1.7])
-        if c1.button("หาชื่อเรียก ชื่อหุ้น และแอปอัตโนมัติ", icon=":material/auto_fix_high:"):
-            with friendly_errors(), st.spinner("กำลังค้นหาชื่อเรียก ชื่อหุ้น และแอป..."):
-                profiles = profile.suggest_profiles(names)
-                found_notes = []
-                for row in draft["rows"]:
-                    found = app_reviews.search_apps(row["name"])
-                    row["appstore_id"] = row["appstore_id"] or found.get("appstore_id", "")
-                    row["play_app_id"] = row["play_app_id"] or found.get("play_app_id", "")
-                    suggested = profiles.get(row["name"], {})
-                    if not row["aliases"] and suggested.get("aliases"):
-                        row["aliases"] = ", ".join(suggested["aliases"])
-                    row["set_symbol"] = row["set_symbol"] or suggested.get("set_symbol", "")
-                    found_notes.append(f"{row['name']}: หุ้น “{row['set_symbol'] or 'ไม่อยู่ในตลาด'}” · "
-                                       f"App Store “{found.get('appstore_name', '-')}” · "
-                                       f"Google Play “{found.get('play_name', '-')}”")
-                draft["found"] = found_notes
-                st.session_state.source_editor_v = st.session_state.get("source_editor_v", 0) + 1
-        for note in draft.get("found", []):
-            st.caption(note)
-
-        edited = st.data_editor(
-            pd.DataFrame(draft["rows"]), hide_index=True, width="stretch",
-            key=f"source_editor_{st.session_state.get('source_editor_v', 0)}",
-            disabled=["name"], column_config={k: st.column_config.TextColumn(v) for k, v in SOURCE_COLS.items()},
-        )
-        if c2.button("บันทึก", icon=":material/save:"):
-            for _, row in edited.iterrows():
-                aliases = [a.strip() for a in str(row["aliases"] or "").split(",") if a.strip()]
-                db.update_company_sources(row["name"], aliases, str(row["play_app_id"] or "").strip(),
-                                          str(row["appstore_id"] or "").strip(), str(row["website"] or "").strip(),
-                                          str(row["set_symbol"] or "").strip())
-            st.session_state.pop("source_draft", None)
-            st.toast("บันทึกแหล่งข้อมูลแล้ว")
-
-
-# ---------- Phase 3: ยืนยันรายชื่อคู่แข่ง ----------
-
-@contextmanager
-def friendly_errors():
-    try:
-        yield
-    except RuntimeError as e:
-        st.error(f"{e} เปิดไฟล์ `.env` ใส่ `LLM_API_KEY=...` แล้วรีสตาร์ทแอป")
-    except requests.RequestException as e:
-        st.error(f"เชื่อมต่อ LLM ไม่ได้ ({type(e).__name__}) ข่าวที่จัดหมวดแล้วถูกบันทึกไว้ "
-                 "กดอีกครั้งจะทำต่อจากเดิม")
 
 
 def confirm_panel(disc):
@@ -683,16 +254,23 @@ run = find = False
 
 # ค่าเริ่มต้นของช่องกรอก ตั้งครั้งเดียวต่อ session (widget ใช้ key คงที่ ค่าจะไม่รีเซ็ตเองหลังวิเคราะห์)
 if "mode_input" not in st.session_state:
-    st.session_state.mode_input = res["mode"] if res and res["mode"] in MODES else "compare"
-    st.session_state.self_input = (res or {}).get("self_name") or ""
+    last = res or {}
+    st.session_state.mode_input = last["mode"] if res and res["mode"] in MODES else "compare"
+    st.session_state.self_input = last.get("self_name") or ""
     st.session_state.comp_input = [c for c in (res["companies"] if res else DEFAULT_COMPANIES)
-                                   if c != (res or {}).get("self_name")][:5]
+                                   if c != last.get("self_name")][:5]
+    st.session_state.focus_cats = [c for c in last.get("focus", {}).get("categories", []) if c in FOCUS_CATEGORIES]
+    st.session_state.focus_kw = ", ".join(last.get("focus", {}).get("keywords", []))
 
 with st.sidebar:
     st.header("ตั้งค่าการวิเคราะห์")
+    adv = st.toggle("ตัวเลือกละเอียด (นักวิเคราะห์)", key="adv",
+                    help="เลือกแหล่งข้อมูลเอง ปิดแหล่งรายบริษัท จำนวนข่าว และดึงเนื้อหาเต็ม")
+
+    st.subheader("① เทียบใครบ้าง", divider="gray")
     mode_keys = list(MODES)
     mode = st.radio("โหมด", mode_keys, format_func=lambda k: MODES[k][0],
-                    captions=[MODES[k][1] for k in mode_keys], key="mode_input")
+                    captions=[MODES[k][1] for k in mode_keys], key="mode_input", label_visibility="collapsed")
 
     self_name = None
     if mode in ("self", "discover"):
@@ -701,7 +279,7 @@ with st.sidebar:
     if mode == "discover":
         top_x = st.slider("จำนวนคู่แข่งที่ต้องการ", 3, 10, 5)
         industry = st.text_input("อุตสาหกรรม (ไม่บังคับ)", placeholder="เช่น โทรคมนาคม, ส่งอาหาร")
-        country = st.text_input("ประเทศ", "ประเทศไทย")
+        country = st.text_input("ประเทศ", "ประเทศไทย") if adv else "ประเทศไทย"
     else:
         options = sorted(set(db.company_names()) | set(DEFAULT_COMPANIES) | set(st.session_state.comp_input),
                          key=str.lower)
@@ -713,23 +291,36 @@ with st.sidebar:
         )
         competitors = [c for c in competitors if c != self_name]
 
-    with st.expander("แหล่งข้อมูล"):
-        chosen = [key for key, (_, label) in collect.SOURCES.items()
-                  if st.checkbox(label, value=True, key=f"src_{key}")]
+    st.subheader("② สนใจเรื่องอะไร", divider="gray")
+    focus_cats = st.pills("หมวด", FOCUS_CATEGORIES, format_func=CATEGORY_TH.get, selection_mode="multi",
+                          key="focus_cats", help="เลือกแล้วจะค้นข่าวหมวดนั้นเพิ่ม และวิเคราะห์เฉพาะหมวดที่เลือก")
+    focus_kw = st.text_input("คำค้นเฉพาะเรื่อง", key="focus_kw", placeholder="เช่น 5G, AI (คั่นด้วย ,)",
+                             help="ค้นข่าวเพิ่มด้วย “ชื่อบริษัท + คำนี้” แล้ววิเคราะห์เฉพาะข่าว/รีวิวที่มีคำนี้ "
+                                  "(งบการเงินไม่เปลี่ยน)")
+    focus = {"categories": focus_cats or [], "keywords": [w.strip() for w in focus_kw.split(",") if w.strip()]}
+    st.caption("ว่างไว้ = วิเคราะห์ทุกเรื่อง")
+
+    st.subheader("③ ข้อมูลจากไหน", divider="gray")
+    all_keys = list(ALL_SOURCES)
+    if adv:
+        picked = st.pills("แหล่งข้อมูล", all_keys, format_func=ALL_SOURCES.get, selection_mode="multi",
+                          default=all_keys, key="src_pick")
         full = st.checkbox("ดึงเนื้อหาเต็มของข่าว", value=False, key="src_fulltext",
                            help="เปิดลิงก์ข่าวแต่ละข่าวเพื่ออ่านเนื้อหา ทำให้สรุปแม่นขึ้น แต่ช้าลงหลายนาที "
                                 "และใช้ LLM มากขึ้น (ส่งทีละ 5 ข่าวแทน 10)")
-        fin_on = st.checkbox("งบการเงิน (SET)", value=True, key="src_fin",
-                             help="งบล่าสุดที่บริษัทยื่นต่อตลาดหลักทรัพย์ฯ ใช้ได้เฉพาะบริษัทจดทะเบียน")
-        st.caption("ชื่อหุ้น SET ระบบหาให้ตอนวิเคราะห์ ส่วนรีวิวแอปและเว็บไซต์บริษัทต้องตั้งค่าในหัวข้อ "
-                   "“แหล่งข้อมูลของแต่ละบริษัท” ในหน้าหลักก่อน")
-    with st.expander("ตั้งค่าเพิ่มเติม"):
-        limit = st.slider("จำนวนข่าวต่อบริษัท ต่อแหล่ง", 10, 50, 20, step=5,
-                          help="จำนวนรายการสูงสุดที่ดึงจากแต่ละแหล่งข่าวต่อบริษัท")
+        limit = st.slider("จำนวนข่าวต่อบริษัท ต่อแหล่ง", 10, 50, 20, step=5)
         review_limit = st.slider("จำนวนรีวิวต่อแอป", 10, 50, 20, step=5,
                                  help="รีวิวล่าสุดต่อแอปต่อสโตร์ ยิ่งมากยิ่งใช้ LLM มาก")
-    opts = {"sources": chosen, "fulltext": full, "review_limit": review_limit, "financials": fin_on}
+        st.caption("ปิดแหล่งเฉพาะบางบริษัทได้ใน “แหล่งข้อมูลของแต่ละบริษัท” ในหน้าหลัก")
+    else:
+        picked, full, limit, review_limit = all_keys, False, 20, 20
+        st.caption("ใช้ทุกแหล่ง: ข่าว ข่าวแจ้งตลาด รีวิวแอป เว็บไซต์ และงบการเงินจาก SET · "
+                   "เปิด “ตัวเลือกละเอียด” เพื่อเลือกเอง")
+    picked = picked or []
+    opts = {"sources": [k for k in picked if k != FINANCIALS_KEY], "fulltext": full,
+            "review_limit": review_limit, "financials": FINANCIALS_KEY in picked}
 
+    st.divider()
     if mode == "discover":
         find = st.button("หาคู่แข่ง", type="primary", disabled=not self_name,
                          icon=":material/search:", width="stretch")
@@ -741,7 +332,7 @@ with st.sidebar:
             problems.append("กรอกชื่อบริษัทของเรา")
         if not 2 <= len(competitors) <= 5:
             problems.append("เลือกคู่แข่ง 2–5 ราย (ไม่นับบริษัทเรา)")
-        if not chosen:
+        if not opts["sources"]:
             problems.append("เลือกแหล่งข้อมูลอย่างน้อย 1 แหล่ง")
         run = st.button("เริ่มวิเคราะห์", type="primary", disabled=bool(problems),
                         icon=":material/play_arrow:", width="stretch")
@@ -755,13 +346,14 @@ def finish(new_res, empty):
     if empty:
         st.warning(f"ไม่พบข่าวของ: {', '.join(empty)} ลองตรวจตัวสะกดหรือใช้ชื่อที่สื่อใช้บ่อย")
     if new_res:
+        results.reset_filters()  # ตัวกรองเดิมอาจไม่ตรงกับบริษัท/หมวดชุดใหม่
         st.session_state.result = new_res
     return st.session_state.result
 
 
 if run:
     with friendly_errors():
-        res = finish(*run_pipeline(competitors, limit, self_name=self_name, mode=mode, opts=opts))
+        res = finish(*run_pipeline(competitors, limit, self_name=self_name, mode=mode, opts=opts, focus=focus))
 
 if find:
     with friendly_errors():
@@ -773,13 +365,15 @@ if find:
         st.session_state.discovery = {"id": st.session_state.get("discovery", {}).get("id", 0) + 1,
                                       "company": self_name, "result": found, "pending": True}
 
-# บริษัทที่จะวิเคราะห์ในรอบถัดไป ใช้กับตารางตั้งค่าแหล่งข้อมูล
+# บริษัทที่จะวิเคราะห์ในรอบถัดไป ใช้กับการ์ดแหล่งข้อมูล
 disc = st.session_state.get("discovery")
 if mode == "discover":
     upcoming = [disc["company"]] + [c["name"] for c in disc["result"]["candidates"]] if disc else []
+    panel_self = disc["company"] if disc else None
 else:
     upcoming = ([self_name] if self_name else []) + competitors
-source_settings(list(dict.fromkeys(upcoming)))
+    panel_self = self_name
+company_panel.render(list(dict.fromkeys(upcoming)), panel_self, picked, adv)
 
 if mode == "discover" and disc and disc["pending"]:
     panel = st.empty()
@@ -790,11 +384,11 @@ if mode == "discover" and disc and disc["pending"]:
     panel.empty()
     with friendly_errors():
         res = finish(*run_pipeline(names, limit, self_name=disc["company"], origins=origins, mode="discover",
-                                   opts=opts))
+                                   opts=opts, focus=focus))
         disc["pending"] = False
 
-if not res or res["df"].empty:
+if not res or (res["df"].empty and res["fin"].empty):
     empty_state()
     st.stop()
 
-show_results(res)
+results.show(res, on_new_report)

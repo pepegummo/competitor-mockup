@@ -20,6 +20,17 @@ SOURCES = {
 SOURCE_TYPE_LABEL = {"news": "Google News", "rss": "สำนักข่าวไทย", "review": "รีวิวแอป", "website": "เว็บไซต์บริษัท",
                      "set": "ข่าวแจ้งตลาด SET"}
 
+# คำค้นเพิ่มเมื่อผู้ใช้เลือกหมวดที่สนใจ (ข่าว/PR กว้างเกินจะค้นเพิ่ม)
+CATEGORY_QUERY = {"product_price": "แพ็กเกจ ราคา", "promotion": "โปรโมชัน", "financial": "ผลประกอบการ",
+                  "hr": "ผู้บริหาร", "review": "รีวิว"}
+
+
+def topic_queries(focus):
+    """คำที่ต่อท้ายชื่อบริษัทเพื่อค้นข่าวเพิ่มตามหัวข้อที่สนใจ"""
+    focus = focus or {}
+    return list(dict.fromkeys(list(focus.get("keywords") or [])
+                              + [CATEGORY_QUERY[c] for c in focus.get("categories") or [] if c in CATEGORY_QUERY]))
+
 
 def _safe_name(name):
     return re.sub(r'[\\/:*?"<>|]+', "_", name).strip() or "unknown"
@@ -40,10 +51,12 @@ def title_key(title):
     return re.sub(r"[\W_]+", "", title.lower())
 
 
-def collect_company(company_id, company, limit=20, sources=("google_news",), fulltext_on=False, review_limit=20):
+def collect_company(company_id, company, limit=20, sources=("google_news",), fulltext_on=False, review_limit=20,
+                    focus=None):
     """ดึงจากทุกแหล่งที่เลือก → เก็บไฟล์ดิบ → insert documents
     คืน (stats, notes): stats = {ชื่อแหล่ง: (ดึงได้, ใหม่)}, notes = ข้อความที่ควรบอกผู้ใช้"""
     row = db.get_companies([company])[0]
+    row["topics"] = topic_queries(focus)  # google_news ใช้ค้นเพิ่ม
     folder = RAW_DIR / _safe_name(company)
     folder.mkdir(parents=True, exist_ok=True)
     seen_titles = db.title_keys(company_id)
