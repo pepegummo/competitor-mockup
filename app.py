@@ -7,7 +7,7 @@ import requests
 import streamlit as st
 
 from core import analyze, collect, db, discover, llm, process, profile
-from core.sources import app_reviews
+from core.sources import SourceSkipped, app_reviews, set_api
 
 CATEGORY_TH = {
     "product_price": "สินค้า/ราคา",
@@ -27,6 +27,8 @@ MODES = {
 }
 DEFAULT_COMPANIES = ["AIS", "True", "NT"]
 LAST_RUN = db.DATA_DIR / "last_run.json"
+FINANCE_TH = {"revenue_yoy_pct": "รายได้โต (% YoY)", "net_profit_yoy_pct": "กำไรโต (% YoY)",
+              "net_margin_pct": "อัตรากำไรสุทธิ (%)", "ebitda_margin_pct": "อัตรา EBITDA (%)", "roe_pct": "ROE (%)"}
 
 st.set_page_config(page_title="Competitor Compare", page_icon="📊", layout="wide")
 db.init_db()
@@ -54,6 +56,8 @@ def build_result(companies, report_row, self_name=None, mode="compare"):
     ids = db.company_ids(companies)
     df, table_a, table_b, table_c = analyze.build_tables(ids)
     gap, reviews = pd.DataFrame(), pd.DataFrame()
+    fins = db.financials_by_company(ids)
+    fin = analyze.financial_table(fins) if fins else pd.DataFrame()
     if not df.empty:
         df["หมวด"] = df["category"].map(CATEGORY_TH)
         df["น้ำเสียง"] = df["sentiment"].map(SENTIMENT_TH)
@@ -61,10 +65,10 @@ def build_result(companies, report_row, self_name=None, mode="compare"):
         df["แหล่ง"] = df["source_type"].map(collect.SOURCE_TYPE_LABEL)
         reviews = analyze.review_table(df)
         if self_name and not table_b.empty:
-            gap = analyze.gap_table(df, table_b, self_name, reviews)
+            gap = analyze.gap_table(df, table_b, self_name, reviews, fin)
     return dict(
         mode=mode, self_name=self_name, companies=companies,
-        df=df, a=table_a, b=table_b, c=table_c, gap=gap, reviews=reviews,
+        df=df, a=table_a, b=table_b, c=table_c, gap=gap, reviews=reviews, fin=fin, fin_raw=fins,
         report=report_row["content_md"], report_at=report_row["created_at"],
         fetched_at=db.last_fetched_at(ids),
     )
@@ -97,6 +101,8 @@ def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare
 
         labels = [collect.SOURCES[k][1] for k in opts["sources"]]
         st.write(f"**1/3 ดึงข้อมูล** ({', '.join(labels)})")
+        if "set_news" in opts["sources"] or opts.get("financials"):
+            lookup_symbols(companies)
         if opts["fulltext"]:
             status.update(label="ดึงข้อมูลและเนื้อหาเต็ม (อาจใช้เวลาหลายนาที)...")
         empty = []
@@ -109,6 +115,8 @@ def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare
                 st.caption(f"  {name} · {note}")
             if sum(n for label, (n, a) in stats.items() if label != "รีวิวแอป") == 0:
                 empty.append(name)
+        if opts.get("financials"):
+            fetch_financials(ids, companies)
 
         st.write("**2/3 จัดหมวดด้วย LLM**")
         saved, skipped = process.classify_pending(ids, on_progress=lambda m: status.update(label=m))
@@ -125,19 +133,57 @@ def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare
         st.write("**3/3 เขียนรายงาน**")
         report_mode = "phase1" if not self_name else ("phase3" if mode == "discover" else "phase2")
         reviews = analyze.review_table(df)
-        gap = analyze.gap_table(df, table_b, self_name, reviews) if self_name else None
+        fins = db.financials_by_company(ids)
+        fin = analyze.financial_table(fins) if fins else pd.DataFrame()
+        gap = analyze.gap_table(df, table_b, self_name, reviews, fin) if self_name else None
         if self_name and (gap is None or gap.empty):
             # ไม่มีข่าวของเราหรือของคู่แข่ง → เขียนรายงานกลาง ๆ แทน
             st.write(f"- ไม่มีข่าวพอเทียบกับ {self_name} จึงเขียนรายงานแบบเทียบคู่แข่งแทน")
             self_name, report_mode = None, "phase1"
         analyze.write_report(table_a, table_b, table_c, self_name=self_name, gap=gap, mode=report_mode,
-                             reviews=reviews)
+                             reviews=reviews, fin=fin)
         report = db.latest_report(report_mode)
         status.update(label=f"วิเคราะห์เสร็จ · เรียก LLM {llm.call_count - calls_before} ครั้ง",
                       state="complete", expanded=False)
 
     save_last_run(companies=companies, report_id=report["id"], self_name=self_name, mode=mode)
     return build_result(companies, report, self_name, mode), empty
+
+
+def lookup_symbols(companies):
+    """หาชื่อหุ้น SET ให้บริษัทที่ยังไม่เคยหา (1 LLM call ตรวจกับรายชื่อหุ้นจริง) แล้วแจ้งผลให้ผู้ใช้ตรวจ"""
+    missing = [r["name"] for r in db.get_companies(companies) if r["set_symbol"] is None]
+    if not missing:
+        return
+    profiles = profile.suggest_profiles(missing)
+    if not profiles:
+        st.caption("  หาชื่อหุ้น SET อัตโนมัติไม่สำเร็จ ใส่เองได้ใน “แหล่งข้อมูลของแต่ละบริษัท”")
+        return
+    for name in missing:
+        p = profiles.get(name, {"set_symbol": "", "aliases": []})
+        db.set_company_profile(name, p["set_symbol"], p["aliases"])
+    st.write("- ชื่อหุ้น SET ที่ระบบหาให้: " + " · ".join(
+        f"{n} → {profiles.get(n, {}).get('set_symbol') or 'ไม่อยู่ในตลาด'}" for n in missing)
+        + " (ถ้าผิดแก้ได้ใน “แหล่งข้อมูลของแต่ละบริษัท”)")
+    st.session_state.pop("source_draft", None)  # ให้ตารางตั้งค่าแสดงค่าใหม่
+
+
+def fetch_financials(ids, companies):
+    """ดึงงบการเงินล่าสุดจาก SET ของบริษัทที่ใส่ชื่อหุ้นไว้ แล้วเก็บลง DB"""
+    st.write("**งบการเงิน (SET)**")
+    for cid, row in zip(ids, db.get_companies(companies)):
+        if not row.get("set_symbol"):
+            st.caption(f"  {row['name']} · ไม่มีงบ (ไม่อยู่ในตลาดหลักทรัพย์ฯ หรือยังไม่ได้ใส่ชื่อหุ้น)")
+            continue
+        try:
+            data = set_api.financials(row["set_symbol"])
+        except SourceSkipped as e:
+            st.caption(f"  {row['name']} · {e}")
+            continue
+        db.save_financials(cid, row["set_symbol"], data)
+        filed = data["latest"].get("filed_url") or ""
+        st.write(f"- **{row['name']}**: {row['set_symbol']} งบ {data['latest']['period']}"
+                 + (f" ([ไฟล์งบ]({filed}))" if filed else ""))
 
 
 # ---------- กราฟ ----------
@@ -218,7 +264,7 @@ def empty_state():
     st.info("เลือกโหมดและบริษัทที่แถบด้านซ้าย แล้วกด **เริ่มวิเคราะห์**")
     cols = st.columns(3)
     steps = [
-        ("1. ดึงข่าว", "ดึงหัวข้อข่าวล่าสุดของแต่ละบริษัทจาก Google News"),
+        ("1. ดึงข้อมูล", "ดึงข่าว รีวิวแอป ข่าวแจ้งตลาด และงบการเงินล่าสุดจาก SET ของแต่ละบริษัท"),
         ("2. จัดหมวด", "ให้ LLM แยกหมวดและน้ำเสียงข่าว (บวก/กลาง/ลบ) ข่าวที่เคยจัดแล้วจะไม่ถูกส่งซ้ำ"),
         ("3. สรุปผล", "นับตัวเลขเปรียบเทียบ แล้วให้ LLM เขียนรายงานจากตัวเลขนั้น"),
     ]
@@ -256,6 +302,13 @@ def kpi_cards(res):
                 r = reviews.loc[name]
                 st.caption(f"รีวิวแอป ★ **{r['avg_stars']:.1f}** จาก {int(r['reviews'])} รีวิว "
                            f"(รีวิวลบ {r['negative_pct']:.0f}%)")
+            fin = res.get("fin", pd.DataFrame())
+            if not fin.empty and name in fin.index and pd.notna(fin.loc[name, "revenue_mb"]):
+                f = fin.loc[name]
+                growth = [f"{label} {f[col]:+.1f}%" for label, col in
+                          (("รายได้", "revenue_yoy_pct"), ("กำไร", "net_profit_yoy_pct")) if pd.notna(f[col])]
+                st.caption(f"งบ {f['period']}: รายได้ **{f['revenue_mb']:,.0f} ลบ.**"
+                           + (f" · YoY {' · '.join(growth)}" if growth else ""))
             if is_self and competitors:
                 st.caption("ตัวเลขใต้ % คือส่วนต่างจากค่าเฉลี่ยคู่แข่ง")
 
@@ -299,8 +352,9 @@ def tab_gap(res):
         st.markdown("##### น้ำเสียงข่าว: เราดีหรือแย่กว่า")
         st.altair_chart(gap_chart(gap, "sentiment", self_name), width="stretch")
     table = gap.copy()
-    table["type"] = table["type"].map({"category": "หมวด", "sentiment": "น้ำเสียง", "review": "รีวิวแอป"})
-    table["item"] = table["item"].map({**CATEGORY_TH, **SENTIMENT_TH,
+    table["type"] = table["type"].map({"category": "หมวด", "sentiment": "น้ำเสียง", "review": "รีวิวแอป",
+                                       "finance": "การเงิน"})
+    table["item"] = table["item"].map({**CATEGORY_TH, **SENTIMENT_TH, **FINANCE_TH,
                                        "avg_stars": "คะแนนเฉลี่ย (ดาว)", "negative_pct": "รีวิวลบ (%)"})
     st.dataframe(
         table.rename(columns={"type": "ประเภท", "item": "รายการ", "us_pct": f"{self_name} (%)",
@@ -309,6 +363,8 @@ def tab_gap(res):
     )
     if (gap["type"] == "review").any():
         st.caption("แถวรีวิวแอป: คะแนนเฉลี่ยเป็นดาว (1–5) ไม่ใช่ % ส่วนรีวิวลบยิ่งน้อยยิ่งดี")
+    if (gap["type"] == "finance").any():
+        st.caption("แถวการเงิน: เทียบเฉพาะคู่แข่งที่จดทะเบียนในตลาดหลักทรัพย์ฯ ดูรายละเอียดในแท็บ “งบการเงิน”")
 
 
 def tab_categories(res):
@@ -372,6 +428,79 @@ def tab_reviews(res):
     )
 
 
+def tab_finance(res):
+    fin, raw, self_name = res["fin"], res["fin_raw"], res["self_name"]
+    missing = [c for c in res["companies"] if c not in fin.index]
+    fetched = max(f["fetched_at"] for f in raw.values())
+    as_of = max(f["market"].get("as_of") or "" for f in raw.values())
+    st.caption(f"งบรวมที่บริษัทยื่นต่อตลาดหลักทรัพย์ฯ ดึงจาก set.or.th เมื่อ {fmt_time(fetched)} · "
+               f"ข้อมูลราคาหุ้น ณ {as_of} · ตัวเงินหน่วยล้านบาท (ลบ.)"
+               + (f" · ไม่มีงบ: {', '.join(missing)} (ไม่ได้จดทะเบียน หรือยังไม่ได้ใส่ชื่อหุ้น)" if missing else ""))
+    order = ([self_name] if self_name in fin.index else []) + [c for c in fin.index if c != self_name]
+
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown("##### รายได้และกำไรสุทธิรายปี")
+        hist = pd.DataFrame([{**h, "company": name} for name, f in raw.items() for h in f["history"]
+                             if h["period"] == "ทั้งปี"])
+        if not hist.empty:
+            long = hist.melt(id_vars=["company", "year"], value_vars=["revenue", "net_profit"],
+                             var_name="ตัวเลข", value_name="ล้านบาท")
+            long["ตัวเลข"] = long["ตัวเลข"].map({"revenue": "รายได้รวม", "net_profit": "กำไรสุทธิ"})
+            st.altair_chart(
+                alt.Chart(long).mark_bar().encode(
+                    x=alt.X("year:O", title=None, axis=alt.Axis(labelAngle=0)),
+                    xOffset=alt.XOffset("company:N", sort=order),
+                    y=alt.Y("ล้านบาท:Q", title="ล้านบาท"),
+                    color=alt.Color("company:N", title="บริษัท", sort=order, legend=alt.Legend(orient="bottom")),
+                    opacity=company_opacity(self_name),
+                    row=alt.Row("ตัวเลข:N", title=None, sort=["รายได้รวม", "กำไรสุทธิ"]),
+                    tooltip=["company", "year", "ตัวเลข", alt.Tooltip("ล้านบาท:Q", format=",.0f")],
+                ).properties(height=170).resolve_scale(y="independent"),
+                width="stretch")
+    with right:
+        st.markdown("##### เทียบงบรอบล่าสุด (%)")
+        cols = list(FINANCE_TH)
+        ratios = (fin[cols].rename(columns=FINANCE_TH).reset_index()
+                  .melt(id_vars="company", var_name="ตัวชี้วัด", value_name="%").dropna())
+        st.altair_chart(
+            alt.Chart(ratios).mark_bar().encode(
+                x=alt.X("%:Q", title="%"),
+                y=alt.Y("ตัวชี้วัด:N", title=None, sort=list(FINANCE_TH.values())),
+                yOffset=alt.YOffset("company:N", sort=order),
+                color=alt.Color("company:N", title="บริษัท", sort=order, legend=alt.Legend(orient="bottom")),
+                opacity=company_opacity(self_name),
+                tooltip=["company", "ตัวชี้วัด", alt.Tooltip("%:Q", format=".1f")],
+            ).properties(height=60 + 22 * len(ratios)),
+            width="stretch")
+        st.caption("YoY เทียบช่วงเดียวกันของปีก่อน · ROE มาจากงบทั้งปีล่าสุด · "
+                   "การเติบโตที่ฐานปีก่อนขาดทุนจะไม่แสดง")
+
+    st.dataframe(
+        fin.loc[order], width="stretch",
+        column_config={
+            "company": st.column_config.TextColumn("บริษัท"),
+            "period": st.column_config.TextColumn("งบรอบ"),
+            "revenue_mb": st.column_config.NumberColumn("รายได้รวม (ลบ.)", format="localized"),
+            "revenue_yoy_pct": st.column_config.NumberColumn("รายได้โต (%)", format="%+.1f"),
+            "net_profit_mb": st.column_config.NumberColumn("กำไรสุทธิ (ลบ.)", format="localized"),
+            "net_profit_yoy_pct": st.column_config.NumberColumn("กำไรโต (%)", format="%+.1f"),
+            "net_margin_pct": st.column_config.NumberColumn("อัตรากำไรสุทธิ (%)", format="%.1f"),
+            "ebitda_margin_pct": st.column_config.NumberColumn("อัตรา EBITDA (%)", format="%.1f"),
+            "fy": st.column_config.NumberColumn("ปีงบ (ROE, D/E)", format="%d"),
+            "roe_pct": st.column_config.NumberColumn("ROE (%)", format="%.1f"),
+            "de_ratio": st.column_config.NumberColumn("D/E (เท่า)", format="%.2f"),
+            "market_cap_mb": st.column_config.NumberColumn("มูลค่าตลาด (ลบ.)", format="localized"),
+            "pe": st.column_config.NumberColumn("P/E (เท่า)", format="%.1f"),
+            "dividend_yield_pct": st.column_config.NumberColumn("ปันผล (%)", format="%.2f"),
+        },
+    )
+    links = [f"[{f['symbol']} {f['latest']['period']}]({f['latest']['filed_url']})"
+             for f in raw.values() if f["latest"].get("filed_url")]
+    if links:
+        st.caption("งบฉบับเต็ม (zip): " + " · ".join(links))
+
+
 def tab_all_news(res):
     df = res["df"]
     f0, f1, f2, f3, f4 = st.columns([1, 1, 1, 1, 1.4])
@@ -422,10 +551,11 @@ def show_results(res):
 
     has_gap = res["self_name"] and not res["gap"].empty
     has_reviews = not res.get("reviews", pd.DataFrame()).empty
-    tabs = (["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["หมวดข่าว"]
-            + (["รีวิวแอป"] if has_reviews else []) + ["ข่าวล่าสุด", "ข้อมูลทั้งหมด"])
-    renderers = ([tab_summary] + ([tab_gap] if has_gap else []) + [tab_categories]
-                 + ([tab_reviews] if has_reviews else []) + [tab_latest, tab_all_news])
+    has_fin = not res.get("fin", pd.DataFrame()).empty
+    tabs = (["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + (["งบการเงิน"] if has_fin else [])
+            + ["หมวดข่าว"] + (["รีวิวแอป"] if has_reviews else []) + ["ข่าวล่าสุด", "ข้อมูลทั้งหมด"])
+    renderers = ([tab_summary] + ([tab_gap] if has_gap else []) + ([tab_finance] if has_fin else [])
+                 + [tab_categories] + ([tab_reviews] if has_reviews else []) + [tab_latest, tab_all_news])
     for tab, render in zip(st.tabs(tabs), renderers):
         with tab:
             render(res)
@@ -433,7 +563,8 @@ def show_results(res):
 
 # ---------- ตั้งค่าแหล่งข้อมูลของแต่ละบริษัท ----------
 
-SOURCE_COLS = {"name": "บริษัท", "aliases": "ชื่อที่ใช้ค้นในข่าว (คั่นด้วย ,)", "appstore_id": "App Store id",
+SOURCE_COLS = {"name": "บริษัท", "aliases": "ชื่อที่ใช้ค้นในข่าว (คั่นด้วย ,)", "set_symbol": "ชื่อหุ้น SET",
+               "appstore_id": "App Store id",
                "play_app_id": "Google Play id", "website": "URL หน้าข่าว/โปรโมชันของบริษัท"}
 
 
@@ -441,31 +572,36 @@ def source_settings(names):
     """ตารางแก้ไขชื่อเรียก แอป และเว็บไซต์ของบริษัทที่เลือก พร้อมปุ่มหาอัตโนมัติ"""
     if not names:
         return
-    with st.expander("แหล่งข้อมูลของแต่ละบริษัท (ชื่อเรียก, แอป, เว็บไซต์)"):
-        st.caption("ใช้กับแหล่ง “สำนักข่าวไทย” (จับข่าวจากชื่อเรียก), “รีวิวแอป” และ “เว็บไซต์บริษัท” "
-                   "กดหาอัตโนมัติแล้วตรวจก่อนบันทึก เพราะแอปที่หาได้อาจไม่ใช่ของบริษัทนั้น")
+    with st.expander("แหล่งข้อมูลของแต่ละบริษัท (ชื่อเรียก, ชื่อหุ้น, แอป, เว็บไซต์)"):
+        st.caption("ใช้กับแหล่ง “สำนักข่าวไทย” (จับข่าวจากชื่อเรียก), “ข่าวแจ้งตลาด SET” และงบการเงิน (ชื่อหุ้น), "
+                   "“รีวิวแอป” และ “เว็บไซต์บริษัท” กดหาอัตโนมัติแล้วตรวจก่อนบันทึก "
+                   "เพราะแอปหรือชื่อหุ้นที่หาได้อาจไม่ใช่ของบริษัทนั้น บริษัทนอกตลาดให้เว้นชื่อหุ้นว่าง")
         if st.session_state.get("source_draft", {}).get("names") != names:
             # บริษัทที่ยังไม่มีใน DB แสดงเป็นแถวว่าง จะถูกสร้างเมื่อกดบันทึก
             saved = {r["name"]: r for r in db.get_companies(names)}
-            empty = {"aliases": [], "appstore_id": None, "play_app_id": None, "website": None}
+            empty = {"aliases": [], "set_symbol": None, "appstore_id": None, "play_app_id": None, "website": None}
             st.session_state.source_draft = {"names": names, "rows": [
-                {"name": n, "aliases": ", ".join(r["aliases"]), "appstore_id": r["appstore_id"] or "",
+                {"name": n, "aliases": ", ".join(r["aliases"]), "set_symbol": r["set_symbol"] or "",
+                 "appstore_id": r["appstore_id"] or "",
                  "play_app_id": r["play_app_id"] or "", "website": r["website"] or ""}
                 for n in names for r in [saved.get(n, empty)]]}
         draft = st.session_state.source_draft
 
-        c1, c2, _ = st.columns([1.3, 1, 2])
-        if c1.button("หาแอปและชื่อเรียกอัตโนมัติ", icon=":material/auto_fix_high:"):
-            with friendly_errors(), st.spinner("กำลังค้นหาแอปและชื่อเรียก..."):
-                aliases = profile.suggest_aliases(names)
+        c1, c2, _ = st.columns([1.6, 1, 1.7])
+        if c1.button("หาชื่อเรียก ชื่อหุ้น และแอปอัตโนมัติ", icon=":material/auto_fix_high:"):
+            with friendly_errors(), st.spinner("กำลังค้นหาชื่อเรียก ชื่อหุ้น และแอป..."):
+                profiles = profile.suggest_profiles(names)
                 found_notes = []
                 for row in draft["rows"]:
                     found = app_reviews.search_apps(row["name"])
                     row["appstore_id"] = row["appstore_id"] or found.get("appstore_id", "")
                     row["play_app_id"] = row["play_app_id"] or found.get("play_app_id", "")
-                    if not row["aliases"] and aliases.get(row["name"]):
-                        row["aliases"] = ", ".join(aliases[row["name"]])
-                    found_notes.append(f"{row['name']}: App Store “{found.get('appstore_name', '-')}” · "
+                    suggested = profiles.get(row["name"], {})
+                    if not row["aliases"] and suggested.get("aliases"):
+                        row["aliases"] = ", ".join(suggested["aliases"])
+                    row["set_symbol"] = row["set_symbol"] or suggested.get("set_symbol", "")
+                    found_notes.append(f"{row['name']}: หุ้น “{row['set_symbol'] or 'ไม่อยู่ในตลาด'}” · "
+                                       f"App Store “{found.get('appstore_name', '-')}” · "
                                        f"Google Play “{found.get('play_name', '-')}”")
                 draft["found"] = found_notes
                 st.session_state.source_editor_v = st.session_state.get("source_editor_v", 0) + 1
@@ -481,7 +617,8 @@ def source_settings(names):
             for _, row in edited.iterrows():
                 aliases = [a.strip() for a in str(row["aliases"] or "").split(",") if a.strip()]
                 db.update_company_sources(row["name"], aliases, str(row["play_app_id"] or "").strip(),
-                                          str(row["appstore_id"] or "").strip(), str(row["website"] or "").strip())
+                                          str(row["appstore_id"] or "").strip(), str(row["website"] or "").strip(),
+                                          str(row["set_symbol"] or "").strip())
             st.session_state.pop("source_draft", None)
             st.toast("บันทึกแหล่งข้อมูลแล้ว")
 
@@ -582,13 +719,16 @@ with st.sidebar:
         full = st.checkbox("ดึงเนื้อหาเต็มของข่าว", value=False, key="src_fulltext",
                            help="เปิดลิงก์ข่าวแต่ละข่าวเพื่ออ่านเนื้อหา ทำให้สรุปแม่นขึ้น แต่ช้าลงหลายนาที "
                                 "และใช้ LLM มากขึ้น (ส่งทีละ 5 ข่าวแทน 10)")
-        st.caption("รีวิวแอปและเว็บไซต์บริษัทต้องตั้งค่าในหัวข้อ “แหล่งข้อมูลของแต่ละบริษัท” ในหน้าหลักก่อน")
+        fin_on = st.checkbox("งบการเงิน (SET)", value=True, key="src_fin",
+                             help="งบล่าสุดที่บริษัทยื่นต่อตลาดหลักทรัพย์ฯ ใช้ได้เฉพาะบริษัทจดทะเบียน")
+        st.caption("ชื่อหุ้น SET ระบบหาให้ตอนวิเคราะห์ ส่วนรีวิวแอปและเว็บไซต์บริษัทต้องตั้งค่าในหัวข้อ "
+                   "“แหล่งข้อมูลของแต่ละบริษัท” ในหน้าหลักก่อน")
     with st.expander("ตั้งค่าเพิ่มเติม"):
         limit = st.slider("จำนวนข่าวต่อบริษัท ต่อแหล่ง", 10, 50, 20, step=5,
                           help="จำนวนรายการสูงสุดที่ดึงจากแต่ละแหล่งข่าวต่อบริษัท")
         review_limit = st.slider("จำนวนรีวิวต่อแอป", 10, 50, 20, step=5,
                                  help="รีวิวล่าสุดต่อแอปต่อสโตร์ ยิ่งมากยิ่งใช้ LLM มาก")
-    opts = {"sources": chosen, "fulltext": full, "review_limit": review_limit}
+    opts = {"sources": chosen, "fulltext": full, "review_limit": review_limit, "financials": fin_on}
 
     if mode == "discover":
         find = st.button("หาคู่แข่ง", type="primary", disabled=not self_name,

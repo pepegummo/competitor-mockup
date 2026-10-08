@@ -4,7 +4,7 @@ from datetime import date
 import requests
 
 from core import db, fulltext
-from core.sources import SourceSkipped, app_reviews, google_news, thai_rss, website
+from core.sources import SourceSkipped, app_reviews, google_news, set_api, thai_rss, website
 from core.sources.google_news import fetch_news  # noqa: F401  (discover.py ใช้)
 
 RAW_DIR = db.DATA_DIR / "raw"
@@ -15,8 +15,10 @@ SOURCES = {
     "thai_rss": (thai_rss, "สำนักข่าวไทย"),
     "app_reviews": (app_reviews, "รีวิวแอป"),
     "website": (website, "เว็บไซต์บริษัท"),
+    "set_news": (set_api, "ข่าวแจ้งตลาด SET"),
 }
-SOURCE_TYPE_LABEL = {"news": "Google News", "rss": "สำนักข่าวไทย", "review": "รีวิวแอป", "website": "เว็บไซต์บริษัท"}
+SOURCE_TYPE_LABEL = {"news": "Google News", "rss": "สำนักข่าวไทย", "review": "รีวิวแอป", "website": "เว็บไซต์บริษัท",
+                     "set": "ข่าวแจ้งตลาด SET"}
 
 
 def _safe_name(name):
@@ -74,7 +76,7 @@ def collect_company(company_id, company, limit=20, sources=("google_news",), ful
             seen_titles.add(tk)
             new.append(it)
 
-        if fulltext_on and key != "app_reviews":
+        if fulltext_on and key not in ("app_reviews", "set_news"):  # หน้าข่าว SET โหลดด้วย JavaScript
             got = fulltext.fill(new)
             if new:
                 notes.append(f"{label}: ได้เนื้อหาเต็ม {got}/{len(new)} รายการ")

@@ -47,6 +47,13 @@ CREATE TABLE IF NOT EXISTS reports (
   created_at TEXT,
   content_md TEXT
 );
+
+CREATE TABLE IF NOT EXISTS financials (
+  company_id INTEGER PRIMARY KEY REFERENCES companies(id),
+  symbol TEXT,
+  fetched_at TEXT,
+  data_json TEXT        -- ผลจาก set_api.financials() (เก็บไว้แสดงผลซ้ำได้โดยไม่ต้องดึงใหม่)
+);
 """
 
 
@@ -70,7 +77,7 @@ def now():
 
 # คอลัมน์ที่เพิ่มทีหลัง: DB เก่าจะถูกเพิ่มคอลัมน์ให้อัตโนมัติ
 MIGRATIONS = {
-    "companies": {"aliases": "TEXT", "play_app_id": "TEXT", "appstore_id": "TEXT"},
+    "companies": {"aliases": "TEXT", "play_app_id": "TEXT", "appstore_id": "TEXT", "set_symbol": "TEXT"},
     "documents": {"source_name": "TEXT", "content": "TEXT", "rating": "INTEGER"},
 }
 
@@ -148,17 +155,54 @@ def get_companies(names):
     return out
 
 
-def update_company_sources(name, aliases=None, play_app_id=None, appstore_id=None, website=None):
+def update_company_sources(name, aliases=None, play_app_id=None, appstore_id=None, website=None,
+                           set_symbol=None):
     """บันทึกการตั้งค่าแหล่งข้อมูลของบริษัท (สร้างบริษัทถ้ายังไม่มี)"""
     with connect() as conn:
         conn.execute("INSERT OR IGNORE INTO companies (name, role, origin) VALUES (?, 'competitor', 'user')",
                      (name,))
         conn.execute(
-            """UPDATE companies SET aliases = ?, play_app_id = ?, appstore_id = ?, website = ?
+            # set_symbol: NULL = ยังไม่เคยหา (ระบบจะหาให้ตอนวิเคราะห์), '' = ไม่อยู่ในตลาด/ผู้ใช้ลบออก
+            """UPDATE companies SET aliases = ?, play_app_id = ?, appstore_id = ?, website = ?,
+                 set_symbol = CASE WHEN ? != '' THEN ? WHEN set_symbol IS NULL THEN NULL ELSE '' END
                WHERE name = ?""",
             (json.dumps(aliases or [], ensure_ascii=False), play_app_id or None,
-             appstore_id or None, website or None, name),
+             appstore_id or None, website or None, *[(set_symbol or "").strip().upper()] * 2, name),
         )
+
+
+def set_company_profile(name, set_symbol, aliases=None):
+    """บันทึกชื่อหุ้นที่ระบบหาให้ ('' = ไม่อยู่ในตลาด) และชื่อเรียกถ้ายังไม่มี"""
+    with connect() as conn:
+        conn.execute(
+            """UPDATE companies SET set_symbol = ?,
+                 aliases = CASE WHEN aliases IS NULL OR aliases = '[]' THEN ? ELSE aliases END
+               WHERE name = ?""",
+            (set_symbol.strip().upper(), json.dumps(aliases or [], ensure_ascii=False), name),
+        )
+
+
+def save_financials(company_id, symbol, data):
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO financials (company_id, symbol, fetched_at, data_json) VALUES (?, ?, ?, ?)
+               ON CONFLICT(company_id) DO UPDATE SET
+                 symbol = excluded.symbol, fetched_at = excluded.fetched_at, data_json = excluded.data_json""",
+            (company_id, symbol, now(), json.dumps(data, ensure_ascii=False)),
+        )
+
+
+def financials_by_company(company_ids):
+    """{ชื่อบริษัท: ข้อมูลงบ} ของบริษัทที่เคยดึงงบไว้ (บริษัทที่ไม่มีชื่อหุ้นตอนนี้จะไม่ถูกคืน)"""
+    if not company_ids:
+        return {}
+    with connect() as conn:
+        rows = conn.execute(
+            f"""SELECT c.name, f.fetched_at, f.data_json FROM financials f
+                JOIN companies c ON c.id = f.company_id
+                WHERE f.company_id IN ({_in(company_ids)}) AND f.symbol = c.set_symbol""",
+            company_ids).fetchall()
+    return {r["name"]: {**json.loads(r["data_json"]), "fetched_at": r["fetched_at"]} for r in rows}
 
 
 def insert_fact(document_id, company_id, category, sentiment, summary, data_json=None):
