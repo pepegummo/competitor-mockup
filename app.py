@@ -1,11 +1,12 @@
 import json
+from contextlib import contextmanager
 
 import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
 
-from core import analyze, collect, db, llm, process
+from core import analyze, collect, db, discover, llm, process
 
 CATEGORY_TH = {
     "product_price": "สินค้า/ราคา",
@@ -21,6 +22,7 @@ SENTIMENT_COLORS = {"บวก": "#2e9e5b", "กลาง": "#9aa0a6", "ลบ":
 MODES = {
     "compare": ("เทียบคู่แข่ง", "เทียบคู่แข่งกันเอง รายงานกลาง ๆ"),
     "self": ("เรา vs คู่แข่ง", "มองจากมุมบริษัทเรา พร้อมข้อเสนอแนะ"),
+    "discover": ("หาคู่แข่งให้", "บอกแค่บริษัทเรา ระบบหาคู่แข่งให้แล้วให้คุณยืนยัน"),
 }
 DEFAULT_COMPANIES = ["AIS", "True", "NT"]
 LAST_RUN = db.DATA_DIR / "last_run.json"
@@ -351,64 +353,152 @@ def show_results(res):
             render(res)
 
 
+# ---------- Phase 3: ยืนยันรายชื่อคู่แข่ง ----------
+
+@contextmanager
+def friendly_errors():
+    try:
+        yield
+    except RuntimeError as e:
+        st.error(f"{e} เปิดไฟล์ `.env` ใส่ `LLM_API_KEY=...` แล้วรีสตาร์ทแอป")
+    except requests.RequestException as e:
+        st.error(f"เชื่อมต่อ LLM ไม่ได้ ({type(e).__name__}) ข่าวที่จัดหมวดแล้วถูกบันทึกไว้ "
+                 "กดอีกครั้งจะทำต่อจากเดิม")
+
+
+def confirm_panel(disc):
+    """แสดงรายชื่อที่ระบบหาได้ ให้ผู้ใช้ติ๊กเลือก/เพิ่มเอง คืน (กดยืนยันไหม, รายชื่อ, origins)"""
+    r = disc["result"]
+    st.subheader(f"คู่แข่งที่พบสำหรับ {disc['company']}")
+    if not r["found"]:
+        st.warning(r["message"])
+        return False, [], {}
+    st.caption(f"{r['message']} · ติ๊กเฉพาะรายที่ใช่ แล้วกดยืนยัน "
+               "ถ้ารายชื่อผิด ผลวิเคราะห์ที่ตามมาจะผิดทั้งหมด")
+
+    picked = []
+    for i, c in enumerate(r["candidates"]):
+        with st.container(border=True):
+            check = st.checkbox(f"**{c['name']}**", value=not c["no_evidence"], key=f"cand_{disc['id']}_{i}")
+            badges = [f":violet-badge[{s}]" if s == "LLM" else f":blue-badge[{s}]" for s in c["sources"]]
+            if c["no_evidence"]:
+                badges.append(":red-badge[ไม่พบหลักฐาน]")
+            co = "20+" if c["co_mentions"] >= 20 else c["co_mentions"]
+            st.markdown(" ".join(badges) + f" · ข่าวที่พูดถึงคู่กับ {disc['company']}: {co} ข่าว")
+            if c["reason"]:
+                st.caption(c["reason"])
+            if c["evidence"]:
+                st.markdown("\n".join(f"- [{e['title']}]({e['url']})" for e in c["evidence"]))
+            if check:
+                picked.append(c["name"])
+
+    extra = st.text_input("เพิ่มคู่แข่งเอง (คั่นด้วย ,)", key=f"extra_{disc['id']}", placeholder="เช่น dtac, Jasmine")
+    typed = [n.strip() for n in extra.split(",") if n.strip() and n.strip() not in picked]
+    names = picked + typed
+    too_many = len(names) > 10
+    ok = st.button(f"ยืนยันและวิเคราะห์ ({len(names)} ราย)", type="primary",
+                   disabled=not names or too_many, icon=":material/check:")
+    if too_many:
+        st.caption("เลือกได้สูงสุด 10 ราย")
+    origins = {n: "discovered" for n in picked} | {n: "user" for n in typed}
+    return ok, names, origins
+
+
 # ---------- หน้าเว็บ ----------
 
 if "result" not in st.session_state:
     st.session_state.result = restore_last_result()
 res = st.session_state.result
+run = find = False
+
+# ค่าเริ่มต้นของช่องกรอก ตั้งครั้งเดียวต่อ session (widget ใช้ key คงที่ ค่าจะไม่รีเซ็ตเองหลังวิเคราะห์)
+if "mode_input" not in st.session_state:
+    st.session_state.mode_input = res["mode"] if res and res["mode"] in MODES else "compare"
+    st.session_state.self_input = (res or {}).get("self_name") or ""
+    st.session_state.comp_input = [c for c in (res["companies"] if res else DEFAULT_COMPANIES)
+                                   if c != (res or {}).get("self_name")][:5]
 
 with st.sidebar:
     st.header("ตั้งค่าการวิเคราะห์")
     mode_keys = list(MODES)
     mode = st.radio("โหมด", mode_keys, format_func=lambda k: MODES[k][0],
-                    captions=[MODES[k][1] for k in mode_keys],
-                    index=mode_keys.index(res["mode"]) if res and res["mode"] in MODES else 0)
+                    captions=[MODES[k][1] for k in mode_keys], key="mode_input")
 
     self_name = None
-    if mode == "self":
-        self_name = st.text_input("บริษัทของเรา", value=(res or {}).get("self_name") or "",
-                                  placeholder="เช่น AIS").strip() or None
+    if mode in ("self", "discover"):
+        self_name = st.text_input("บริษัทของเรา", key="self_input", placeholder="เช่น AIS").strip() or None
 
-    last_competitors = [c for c in (res["companies"] if res else DEFAULT_COMPANIES) if c != (res or {}).get("self_name")]
-    options = sorted(set(db.company_names()) | set(DEFAULT_COMPANIES) | set(last_competitors), key=str.lower)
-    competitors = st.multiselect(
-        "คู่แข่งที่ต้องการเทียบ", options, default=last_competitors,
-        accept_new_options=True, max_selections=5,
-        placeholder="พิมพ์ชื่อบริษัทแล้วกด Enter",
-        help="เลือก 2–5 ราย พิมพ์ชื่อบริษัทใหม่ได้",
-    )
-    competitors = [c for c in competitors if c != self_name]
+    if mode == "discover":
+        top_x = st.slider("จำนวนคู่แข่งที่ต้องการ", 3, 10, 5)
+        industry = st.text_input("อุตสาหกรรม (ไม่บังคับ)", placeholder="เช่น โทรคมนาคม, ส่งอาหาร")
+        country = st.text_input("ประเทศ", "ประเทศไทย")
+    else:
+        options = sorted(set(db.company_names()) | set(DEFAULT_COMPANIES) | set(st.session_state.comp_input),
+                         key=str.lower)
+        competitors = st.multiselect(
+            "คู่แข่งที่ต้องการเทียบ", options, key="comp_input",
+            accept_new_options=True, max_selections=5,
+            placeholder="พิมพ์ชื่อบริษัทแล้วกด Enter",
+            help="เลือก 2–5 ราย พิมพ์ชื่อบริษัทใหม่ได้",
+        )
+        competitors = [c for c in competitors if c != self_name]
 
     with st.expander("ตั้งค่าเพิ่มเติม"):
         limit = st.slider("จำนวนข่าวต่อบริษัท", 10, 50, 20, step=5,
                           help="จำนวนหัวข้อข่าวล่าสุดที่ดึงจาก Google News ต่อบริษัท")
 
-    problems = []
-    if mode == "self" and not self_name:
-        problems.append("กรอกชื่อบริษัทของเรา")
-    if not 2 <= len(competitors) <= 5:
-        problems.append("เลือกคู่แข่ง 2–5 ราย (ไม่นับบริษัทเรา)")
-    run = st.button("เริ่มวิเคราะห์", type="primary", disabled=bool(problems),
-                    icon=":material/play_arrow:", width="stretch")
-    if problems:
-        st.caption(" และ ".join(problems) + " เพื่อเริ่ม")
+    if mode == "discover":
+        find = st.button("หาคู่แข่ง", type="primary", disabled=not self_name,
+                         icon=":material/search:", width="stretch")
+        st.caption("ใช้ LLM 3 ครั้ง + ค้นข่าว แล้วให้คุณยืนยันรายชื่อก่อนวิเคราะห์"
+                   if self_name else "กรอกชื่อบริษัทของเราเพื่อเริ่ม")
     else:
-        st.caption("ใช้ LLM ประมาณ 1 ครั้งต่อข่าวใหม่ 10 ข่าว และอีก 1 ครั้งสำหรับรายงาน")
+        problems = []
+        if mode == "self" and not self_name:
+            problems.append("กรอกชื่อบริษัทของเรา")
+        if not 2 <= len(competitors) <= 5:
+            problems.append("เลือกคู่แข่ง 2–5 ราย (ไม่นับบริษัทเรา)")
+        run = st.button("เริ่มวิเคราะห์", type="primary", disabled=bool(problems),
+                        icon=":material/play_arrow:", width="stretch")
+        st.caption(" และ ".join(problems) + " เพื่อเริ่ม" if problems
+                   else "ใช้ LLM ประมาณ 1 ครั้งต่อข่าวใหม่ 10 ข่าว และอีก 1 ครั้งสำหรับรายงาน")
 
 st.title("Competitor Compare")
 
+
+def finish(new_res, empty):
+    if empty:
+        st.warning(f"ไม่พบข่าวของ: {', '.join(empty)} ลองตรวจตัวสะกดหรือใช้ชื่อที่สื่อใช้บ่อย")
+    if new_res:
+        st.session_state.result = new_res
+    return st.session_state.result
+
+
 if run:
-    try:
-        new_res, empty = run_pipeline(competitors, limit, self_name=self_name, mode=mode)
-        if empty:
-            st.warning(f"ไม่พบข่าวของ: {', '.join(empty)} ลองตรวจตัวสะกดหรือใช้ชื่อที่สื่อใช้บ่อย")
-        if new_res:
-            st.session_state.result = res = new_res
-    except RuntimeError as e:
-        st.error(f"{e} เปิดไฟล์ `.env` ใส่ `LLM_API_KEY=...` แล้วรีสตาร์ทแอป")
-    except requests.RequestException as e:
-        st.error(f"เชื่อมต่อ LLM ไม่ได้ ({type(e).__name__}) ข่าวที่จัดหมวดแล้วถูกบันทึกไว้ "
-                 "กดเริ่มวิเคราะห์อีกครั้งจะทำต่อจากเดิม")
+    with friendly_errors():
+        res = finish(*run_pipeline(competitors, limit, self_name=self_name, mode=mode))
+
+if find:
+    with friendly_errors():
+        with st.status(f"กำลังหาคู่แข่งของ {self_name}...", expanded=True) as status:
+            found = discover.discover(self_name, top_x, country.strip() or "ประเทศไทย",
+                                      industry.strip() or None, on_progress=st.write)
+            status.update(label=found["message"], state="complete" if found["found"] else "error",
+                          expanded=False)
+        st.session_state.discovery = {"id": st.session_state.get("discovery", {}).get("id", 0) + 1,
+                                      "company": self_name, "result": found, "pending": True}
+
+disc = st.session_state.get("discovery")
+if mode == "discover" and disc and disc["pending"]:
+    panel = st.empty()
+    with panel.container():
+        confirmed, names, origins = confirm_panel(disc)
+    if not confirmed:
+        st.stop()
+    panel.empty()
+    with friendly_errors():
+        res = finish(*run_pipeline(names, limit, self_name=disc["company"], origins=origins, mode="discover"))
+        disc["pending"] = False
 
 if not res or res["df"].empty:
     empty_state()
