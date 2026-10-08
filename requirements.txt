@@ -1,0 +1,7 @@
+streamlit
+requests
+feedparser
+beautifulsoup4
+pandas
+python-dotenv
+tabulate

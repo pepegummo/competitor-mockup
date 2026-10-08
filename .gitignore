@@ -1,0 +1,17 @@
+# secrets
+.env
+.streamlit/secrets.toml
+
+# local data (db, raw news, last run)
+data/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
