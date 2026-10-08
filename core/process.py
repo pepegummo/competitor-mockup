@@ -5,18 +5,24 @@ from core import db, llm
 
 CATEGORIES = {"product_price", "promotion", "news_pr", "review", "financial", "hr", "other"}
 SENTIMENTS = {"positive", "neutral", "negative"}
-BATCH_SIZE = 10
+BATCH_SIZE = 10          # หัวข้ออย่างเดียว
+BATCH_SIZE_CONTENT = 5   # มีเนื้อหา/รีวิว prompt ยาวขึ้น จึงส่งทีละน้อยลง
+CONTENT_CHARS = 600
+SOURCE_TAG = {"news": "news", "rss": "news", "website": "company website", "review": "app review"}
 
-PROMPT = """You are a business analyst. Classify each news headline about a company.
+PROMPT = """You are a business analyst. Classify each item about a company.
+Items are news headlines, company website pages, or customer app reviews (marked [app review]).
 
 Categories: product_price, promotion, news_pr, review, financial, hr, other
+Use category "review" for every [app review] item.
 Sentiment (toward the company): positive, neutral, negative
+For app reviews, sentiment is how the reviewer feels about the company or its app.
 
-Return ONLY a JSON array, one object per headline:
+Return ONLY a JSON array, one object per item:
 [{{"id": <id>, "category": "...", "sentiment": "...", "summary": "<สรุปภาษาไทย 1 ประโยค>"}}]
 
 Company: {company}
-Headlines:
+Items:
 {lines}"""
 
 
@@ -42,9 +48,18 @@ def _validate(result, sent_ids):
     return out
 
 
+def _line(d):
+    tag = SOURCE_TAG.get(d["source_type"] or "news", "news")
+    line = f"{d['id']} [{tag}]: {d['title']}"
+    content = " ".join((d["content"] or "").split())
+    if content and content != d["title"]:
+        line += f"\n    text: {content[:CONTENT_CHARS]}"
+    return line
+
+
 def _classify_batch(company, docs):
     sent_ids = {d["id"] for d in docs}
-    lines = "\n".join(f"{d['id']}: {d['title']}" for d in docs)
+    lines = "\n".join(_line(d) for d in docs)
     prompt = PROMPT.format(company=company, lines=lines)
     for _ in range(2):  # ลอง 1 ครั้ง + ลองใหม่ 1 ครั้ง
         try:
@@ -63,8 +78,11 @@ def classify_pending(company_ids, on_progress=None):
     batches = []
     for (company_id, company), group in groupby(docs, key=lambda d: (d["company_id"], d["company"])):
         group = list(group)
-        for i in range(0, len(group), BATCH_SIZE):
-            batches.append((company_id, company, group[i:i + BATCH_SIZE]))
+        short = [d for d in group if not d["content"]]
+        long_ = [d for d in group if d["content"]]
+        for docs_, size in ((short, BATCH_SIZE), (long_, BATCH_SIZE_CONTENT)):
+            for i in range(0, len(docs_), size):
+                batches.append((company_id, company, docs_[i:i + size]))
 
     for n, (company_id, company, batch) in enumerate(batches, 1):
         if on_progress:

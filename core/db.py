@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -67,9 +68,21 @@ def now():
     return datetime.now().isoformat(timespec="seconds")
 
 
+# คอลัมน์ที่เพิ่มทีหลัง: DB เก่าจะถูกเพิ่มคอลัมน์ให้อัตโนมัติ
+MIGRATIONS = {
+    "companies": {"aliases": "TEXT", "play_app_id": "TEXT", "appstore_id": "TEXT"},
+    "documents": {"source_name": "TEXT", "content": "TEXT", "rating": "INTEGER"},
+}
+
+
 def init_db():
     with connect() as conn:
         conn.executescript(SCHEMA)
+        for table, cols in MIGRATIONS.items():
+            have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols.items():
+                if col not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
 
 
 def upsert_company(name, role="competitor", website=None, origin="user"):
@@ -86,16 +99,66 @@ def upsert_company(name, role="competitor", website=None, origin="user"):
         return conn.execute("SELECT id FROM companies WHERE name = ?", (name,)).fetchone()["id"]
 
 
-def insert_document(company_id, source_type, url, title, published_at, content_hash, raw_path):
+def insert_document(company_id, source_type, url, title, published_at, content_hash, raw_path,
+                    source_name=None, content=None, rating=None):
     """คืน True ถ้าเพิ่มแถวใหม่, False ถ้า hash ซ้ำ (ข้าม)"""
     with connect() as conn:
         cur = conn.execute(
             """INSERT OR IGNORE INTO documents
-               (company_id, source_type, url, title, published_at, content_hash, raw_path, fetched_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (company_id, source_type, url, title, published_at, content_hash, raw_path, now()),
+               (company_id, source_type, url, title, published_at, content_hash, raw_path, fetched_at,
+                source_name, content, rating)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (company_id, source_type, url, title, published_at, content_hash, raw_path, now(),
+             source_name, content, rating),
         )
         return cur.rowcount == 1
+
+
+def existing_hashes(hashes):
+    if not hashes:
+        return set()
+    with connect() as conn:
+        return {r[0] for r in conn.execute(
+            f"SELECT content_hash FROM documents WHERE content_hash IN ({_in(hashes)})", hashes)}
+
+
+def title_keys(company_id):
+    """หัวข้อ (แบบ normalize) ของเอกสารที่ไม่ใช่รีวิวของบริษัทนี้ ใช้กันข่าวซ้ำข้ามแหล่ง"""
+    from core.collect import title_key
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT title FROM documents WHERE company_id = ? AND COALESCE(source_type, 'news') != 'review'",
+            (company_id,)).fetchall()
+    return {title_key(r["title"]) for r in rows}
+
+
+def get_companies(names):
+    """แถวบริษัทพร้อมการตั้งค่าแหล่งข้อมูล เรียงตาม names (ข้ามชื่อที่ไม่มีใน DB)"""
+    if not names:
+        return []
+    with connect() as conn:
+        rows = {r["name"]: dict(r) for r in conn.execute(
+            f"SELECT * FROM companies WHERE name IN ({_in(names)})", names)}
+    out = []
+    for n in names:
+        if n in rows:
+            r = rows[n]
+            r["aliases"] = json.loads(r["aliases"]) if r["aliases"] else []
+            out.append(r)
+    return out
+
+
+def update_company_sources(name, aliases=None, play_app_id=None, appstore_id=None, website=None):
+    """บันทึกการตั้งค่าแหล่งข้อมูลของบริษัท (สร้างบริษัทถ้ายังไม่มี)"""
+    with connect() as conn:
+        conn.execute("INSERT OR IGNORE INTO companies (name, role, origin) VALUES (?, 'competitor', 'user')",
+                     (name,))
+        conn.execute(
+            """UPDATE companies SET aliases = ?, play_app_id = ?, appstore_id = ?, website = ?
+               WHERE name = ?""",
+            (json.dumps(aliases or [], ensure_ascii=False), play_app_id or None,
+             appstore_id or None, website or None, name),
+        )
 
 
 def insert_fact(document_id, company_id, category, sentiment, summary, data_json=None):
@@ -117,7 +180,8 @@ def unprocessed_documents(company_ids):
         return []
     with connect() as conn:
         return conn.execute(
-            f"""SELECT d.id, d.company_id, d.title, c.name AS company
+            f"""SELECT d.id, d.company_id, d.title, d.content, d.source_type, d.source_name,
+                       c.name AS company
                 FROM documents d JOIN companies c ON c.id = d.company_id
                 WHERE d.company_id IN ({_in(company_ids)})
                   AND d.id NOT IN (SELECT document_id FROM facts)
@@ -133,7 +197,9 @@ def facts_df(company_ids):
     with connect() as conn:
         return pd.read_sql_query(
             f"""SELECT c.name AS company, f.category, f.sentiment, f.summary,
-                       d.title, d.url, d.published_at
+                       d.title, d.url, d.published_at,
+                       COALESCE(d.source_type, 'news') AS source_type,
+                       COALESCE(d.source_name, '') AS source_name, d.rating, d.content
                 FROM facts f
                 JOIN documents d ON d.id = f.document_id
                 JOIN companies c ON c.id = f.company_id
