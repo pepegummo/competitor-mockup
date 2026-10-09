@@ -49,11 +49,25 @@ def stock_list():
     """{ชื่อหุ้น: {nameTH, nameEN, type, market, industry, sector}} ของหลักทรัพย์ทั้งหมด รวมใบสำคัญแสดงสิทธิ DR ETF
     (โหลดครั้งเดียวต่อ process)"""
     global _stock_list
-    if _stock_list is None:
+    if _stock_list is not None:
+        return _stock_list
+    from core import db  # เก็บไว้ใน DB 1 วัน: เปิดแอปเร็วขึ้น และใช้ได้แม้ไม่มีเน็ต (โหมดเดโม)
+    fresh = db.get_cache(["stocklist"], max_age_hours=24).get("stocklist")
+    if fresh:
+        _stock_list = fresh
+        return _stock_list
+    try:
         _stock_list = {s["symbol"]: {"nameTH": s.get("nameTH", ""), "nameEN": s.get("nameEN", ""),
                                      "type": s.get("securityType", ""), "market": s.get("market", ""),
                                      "industry": s.get("industry", ""), "sector": s.get("sector", "")}
                        for s in _get("/api/set/stock/list").get("securitySymbols", [])}
+    except SourceSkipped:
+        stale = db.get_cache(["stocklist"]).get("stocklist")  # SET ใช้ไม่ได้: ใช้ของเก่าที่เก็บไว้
+        if not stale:
+            raise
+        _stock_list = stale
+        return _stock_list
+    db.set_cache("stocklist", _stock_list)
     return _stock_list
 
 

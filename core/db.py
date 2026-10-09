@@ -89,6 +89,28 @@ CREATE TABLE IF NOT EXISTS internal_metrics (
   PRIMARY KEY (company, metric)  -- อัปโหลดซ้ำ = แทนค่าเดิม
 );
 
+CREATE TABLE IF NOT EXISTS llm_log (
+  id INTEGER PRIMARY KEY,
+  hash TEXT,             -- sha256 ของ model + system + prompt (ใช้เล่นคำตอบซ้ำเมื่อ LLM_REPLAY=1 หรือ LLM ล่ม)
+  model TEXT,
+  prompt TEXT,
+  response TEXT,
+  ms INTEGER,
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS llm_log_hash ON llm_log(hash);
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id INTEGER PRIMARY KEY,
+  status TEXT,           -- 'running' | 'done' | 'error'
+  config_json TEXT,      -- companies, self_name, mode, opts, focus, groups
+  log TEXT,              -- บรรทัดความคืบหน้า (แสดงในแอประหว่างรัน)
+  run_id INTEGER,
+  error TEXT,
+  started_at TEXT,
+  finished_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS market_cache (
   key TEXT PRIMARY KEY,  -- "hl:MC" ตัวเลขสรุปของหุ้น (เทียบทั้งหมวด), "px:MC" ราคาปิดรายวัน
   fetched_at TEXT,
@@ -515,3 +537,55 @@ def set_cache(key, data):
     with connect() as conn:
         conn.execute("INSERT OR REPLACE INTO market_cache (key, fetched_at, data_json) VALUES (?, ?, ?)",
                       (key, now(), json.dumps(data, ensure_ascii=False)))
+
+
+# ---------- llm_log ----------
+
+def log_llm(key, model, prompt, response, ms):
+    with connect() as conn:
+        conn.execute("INSERT INTO llm_log (hash, model, prompt, response, ms, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                     (key, model, prompt, response, ms, now()))
+
+
+def llm_cached(key):
+    """คำตอบล่าสุดของ prompt นี้ หรือ None"""
+    with connect() as conn:
+        row = conn.execute("SELECT response FROM llm_log WHERE hash = ? ORDER BY id DESC LIMIT 1", (key,)).fetchone()
+    return row["response"] if row else None
+
+
+def llm_stats(since=None):
+    """{"calls", "seconds"} ของการเรียก LLM จริงตั้งแต่เวลา since (ISO) หรือทั้งหมด"""
+    with connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(ms), 0) AS ms FROM llm_log WHERE created_at >= ?",
+                           (since or "",)).fetchone()
+    return {"calls": row["n"], "seconds": round(row["ms"] / 1000, 1)}
+
+
+# ---------- jobs (วิเคราะห์เบื้องหลัง) ----------
+
+def create_job(config):
+    with connect() as conn:
+        return conn.execute("INSERT INTO jobs (status, config_json, log, started_at) VALUES ('running', ?, '', ?)",
+                            (json.dumps(config, ensure_ascii=False), now())).lastrowid
+
+
+def append_job_log(job_id, line):
+    with connect() as conn:
+        conn.execute("UPDATE jobs SET log = log || ? WHERE id = ?", (line + "\n", job_id))
+
+
+def finish_job(job_id, run_id=None, error=None):
+    with connect() as conn:
+        conn.execute("UPDATE jobs SET status = ?, run_id = ?, error = ?, finished_at = ? WHERE id = ?",
+                     ("error" if error else "done", run_id, error, now(), job_id))
+
+
+def get_job(job_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if not row:
+        return None
+    job = dict(row)
+    job["config"] = json.loads(job.pop("config_json") or "{}")
+    return job

@@ -33,7 +33,8 @@ def _schtasks(*args):
     return r.returncode == 0, (r.stdout or r.stderr).strip()
 
 
-def _start(*args):
+def start_background(*args):
+    """รัน monitor.py เบื้องหลัง (ไม่มีหน้าต่าง) ส่ง environment เดิมไปด้วย เช่น CC_DATA_DIR, LLM_REPLAY"""
     subprocess.Popen([str(_python()), str(SCRIPT), *args], cwd=ROOT, creationflags=NO_WINDOW,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -68,7 +69,7 @@ def _watch_list(on_open):
                 opened = True
             if c3.button("รันตอนนี้", key=f"w_run_{w['id']}", width="stretch",
                          help="รันเบื้องหลัง ใช้เวลาหลายนาที เสร็จแล้วกด “เปิดผลล่าสุด”"):
-                _start("--id", str(w["id"]))
+                start_background("--id", str(w["id"]))
                 st.toast(f"เริ่มรัน {w['name']} เบื้องหลังแล้ว")
             if c4.button("ลบ", key=f"w_del_{w['id']}", icon=":material/delete:", help="ลบชุดนี้"):
                 db.delete_watchlist(w["id"])

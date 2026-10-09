@@ -2,6 +2,7 @@
     python monitor.py            รันทุกชุด
     python monitor.py --id 3     รันเฉพาะชุดที่ 3
     python monitor.py --test-alert  ทดสอบส่งแจ้งเตือน
+    python monitor.py --job 7    รันงานวิเคราะห์ที่แอปสร้างไว้ (ตาราง jobs) แบบเบื้องหลัง หน้าเว็บอ่านความคืบหน้าจาก DB
 ผลแต่ละรอบเก็บใน data/app.db (ตาราง runs) เปิดดูในแอปได้ · บันทึกการทำงานอยู่ที่ data/monitor.log"""
 import argparse
 import os
@@ -49,12 +50,37 @@ def run_watch(w):
         log("ไม่มีเรื่องสำคัญ ไม่ส่งแจ้งเตือน")
 
 
+def run_job(job_id):
+    """งานที่ปุ่ม “เริ่มวิเคราะห์” ในแอปสร้างไว้: บันทึกความคืบหน้าลง jobs.log ให้หน้าเว็บแสดงระหว่างรัน"""
+    job = db.get_job(job_id)
+    if not job:
+        return
+    cfg = job["config"]
+
+    def job_log(text, kind="line"):
+        db.append_job_log(job_id, f"{kind}|{text}")
+
+    try:
+        out = pipeline.run(cfg["companies"], cfg.get("self_name"), cfg.get("mode", "compare"), cfg.get("opts"),
+                           cfg.get("focus"), cfg.get("groups"), log=job_log)
+        if out["empty"]:
+            job_log(f"ไม่พบข่าวของ: {', '.join(out['empty'])} ลองตรวจตัวสะกดหรือใช้ชื่อที่สื่อใช้บ่อย", "warn")
+        db.finish_job(job_id, out["run_id"], out["error"])
+    except Exception as e:  # ให้หน้าเว็บรู้ว่าพัง แทนที่จะรอไปเรื่อย ๆ
+        log(traceback.format_exc())
+        db.finish_job(job_id, error=f"{type(e).__name__}: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", type=int)
     parser.add_argument("--test-alert", action="store_true")
+    parser.add_argument("--job", type=int)
     args = parser.parse_args()
     db.init_db()
+    if args.job:
+        run_job(args.job)
+        return
     if args.test_alert:
         print(monitor.send_alert("📊 Competitor Compare: ทดสอบการแจ้งเตือน")[1])
         return

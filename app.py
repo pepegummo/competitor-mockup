@@ -1,4 +1,6 @@
 import json
+import os
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -126,6 +128,71 @@ def st_log(status):
     return log
 
 
+def register_companies(companies, self_name, origins=None):
+    for name in companies:
+        if name == self_name:
+            db.upsert_company(name, role="self", origin="user")
+        else:
+            db.upsert_company(name, role="competitor", origin=(origins or {}).get(name, "user"))
+
+
+def start_job(competitors, self_name=None, mode="compare", opts=None, focus=None, with_groups=False):
+    """ขั้นที่ต้องโต้ตอบกับผู้ใช้ (บันทึกบริษัท หาบริษัทในเครือ) ทำในหน้าเว็บ แล้วส่งการวิเคราะห์ไปรันเบื้องหลัง
+    (monitor.py --job) หน้าเว็บจึงไม่ค้าง ดูผลเดิมหรือไปหน้าอื่นระหว่างรอได้"""
+    companies = ([self_name] if self_name else []) + competitors
+    register_companies(companies, self_name)
+    groups = {}
+    if with_groups:
+        with st.status("กำลังหาบริษัทในเครือ...", expanded=True) as status:
+            pipeline.lookup_symbols(companies, st_log(status))
+            companies, groups = add_group_members(companies)
+            status.update(label="บริษัทในเครือ: " + (", ".join(groups) or "ไม่มีที่เลือกไว้"), state="complete",
+                          expanded=False)
+        for name, g in groups.items():
+            db.upsert_company(name, role="self" if g["parent"] == self_name else "competitor", origin="group")
+    job_id = db.create_job(dict(companies=companies, self_name=self_name, mode=mode, opts=opts, focus=focus,
+                                groups=groups))
+    watch_panel.start_background("--job", str(job_id))
+    st.session_state.job_id = job_id
+
+
+def _render_log(lines):
+    for kind, text in lines:
+        if kind == "step":
+            st.write(f"**{text}**")
+        elif kind == "note":
+            st.caption("  " + text)
+        elif kind in ("line", "warn"):
+            st.write("- " + text)
+
+
+@st.fragment(run_every=2)
+def job_panel():
+    """ความคืบหน้าของการวิเคราะห์เบื้องหลัง อ่านจาก DB ทุก 2 วินาที เสร็จแล้วเปิดผลให้เอง"""
+    job = db.get_job(st.session_state.get("job_id"))
+    if not job:
+        st.session_state.pop("job_id", None)
+        return
+    lines = [tuple(line.split("|", 1)) for line in job["log"].splitlines() if "|" in line]
+    if job["status"] == "running":
+        seconds = int((datetime.now() - datetime.fromisoformat(job["started_at"])).total_seconds())
+        label = next((t for k, t in reversed(lines) if k == "status"), "กำลังเริ่ม...")
+        with st.status(f"{label} · {seconds} วินาที", expanded=True, state="running"):
+            _render_log(lines)
+            st.caption("รันเบื้องหลัง ดูผลเดิมด้านล่างหรือไปหน้าอื่นระหว่างรอได้")
+            if seconds > 900 and st.button("เลิกรอ", key="job_cancel"):
+                st.session_state.pop("job_id", None)
+                st.rerun(scope="app")
+        return
+    st.session_state.pop("job_id", None)
+    st.session_state.job_notes = [t for k, t in lines if k == "warn"]
+    if job["status"] == "done" and job["run_id"]:
+        open_run(job["run_id"])
+    else:
+        st.session_state.job_notes.append(job["error"] or "วิเคราะห์ไม่สำเร็จ")
+    st.rerun(scope="app")
+
+
 def run_pipeline(competitors, self_name=None, origins=None, mode="compare", opts=None, focus=None,
                  with_groups=False):
     """self_name=None → Phase 1, มี self_name → Phase 2 (เรา vs คู่แข่ง)
@@ -138,11 +205,7 @@ def run_pipeline(competitors, self_name=None, origins=None, mode="compare", opts
     groups = {}
     with st.status("กำลังวิเคราะห์...", expanded=True) as status:
         log = st_log(status)
-        for name in companies:
-            if name == self_name:
-                db.upsert_company(name, role="self", origin="user")
-            else:
-                db.upsert_company(name, role="competitor", origin=origins.get(name, "user"))
+        register_companies(companies, self_name, origins)
         if with_groups:
             st.write("**บริษัทในเครือ**")
             pipeline.lookup_symbols(companies, log)  # ใช้ชื่อหุ้นกันบริษัทในเครือซ้ำกับบริษัทที่เลือกไว้แล้ว
@@ -316,12 +379,18 @@ with st.sidebar:
             problems.append("เลือกคู่แข่ง 2–5 ราย (ไม่นับบริษัทเรา)")
         if not opts["sources"]:
             problems.append("เลือกแหล่งข้อมูลอย่างน้อย 1 แหล่ง")
+        if st.session_state.get("job_id"):
+            problems.append("รอการวิเคราะห์ที่กำลังรันอยู่ให้เสร็จ")
         run = st.button("เริ่มวิเคราะห์", type="primary", disabled=bool(problems),
                         icon=":material/play_arrow:", width="stretch")
         st.caption(" และ ".join(problems) + " เพื่อเริ่ม" if problems
                    else "ใช้ LLM ประมาณ 1 ครั้งต่อข่าวใหม่ 10 ข่าว และอีก 1 ครั้งสำหรับรายงาน")
 
 st.title("Competitor Compare")
+if os.environ.get("CC_DEMO"):
+    st.info(f"โหมดเดโม · ข้อมูลชุดตัวอย่างใน `{db.DATA_DIR.name}/` (ผลวิเคราะห์ คำถามตัวอย่าง ตัวเลข SET เก็บไว้แล้ว "
+            "เปิดได้โดยไม่ต้องใช้เน็ตหรือเครื่อง LLM) · คำถามใหม่และการวิเคราะห์ใหม่ยังต้องใช้เน็ต",
+            icon=":material/slideshow:")
 
 
 def finish(new_res, empty):
@@ -335,8 +404,12 @@ def finish(new_res, empty):
 
 if run:
     with friendly_errors():
-        res = finish(*run_pipeline(competitors, self_name=self_name, mode=mode, opts=opts, focus=focus,
-                                   with_groups=with_groups))
+        start_job(competitors, self_name=self_name, mode=mode, opts=opts, focus=focus, with_groups=with_groups)
+if st.session_state.get("job_id"):
+    job_panel()
+for note in st.session_state.pop("job_notes", []):
+    st.warning(note)
+res = st.session_state.result
 
 if find:
     with friendly_errors():

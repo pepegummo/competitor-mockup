@@ -547,7 +547,7 @@ def tab_data(v):
 
 def _examples(res):
     first = res["self_name"] or res["companies"][0]
-    out = [f"{first} มีข่าวลบเรื่องอะไรบ้าง", "ใครมีโปรโมชันหรือสินค้าใหม่ใน 30 วันล่าสุด"]
+    out = [f"{first} เปิดตัวสินค้าหรือแคมเปญอะไรบ้าง", "ใครมีโปรโมชันหรือสินค้าใหม่ใน 30 วันล่าสุด"]
     if benchmark.symbols_of(res["companies"]):
         out += ["หุ้นตัวไหนขยับแรงหลังข่าว เป็นข่าวอะไร", f"อัตรากำไรของ {first} อยู่อันดับไหนในหมวด"]
     return out
@@ -581,6 +581,8 @@ def tab_ask(res):
             st.markdown(h["answer"])
             f = h["filters"]
             scope = [", ".join(f["companies"]) or "ทุกบริษัท"]
+            if f.get("sentiments"):
+                scope.append("ข่าว" + "/".join(SENTIMENT_TH[x] for x in f["sentiments"]))
             if f["keywords"]:
                 scope.append("คำค้น " + ", ".join(f["keywords"]))
             if f["days"]:

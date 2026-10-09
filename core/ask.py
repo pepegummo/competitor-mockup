@@ -3,12 +3,14 @@
 1) LLM แปลงคำถามเป็นตัวกรอง (บริษัท หมวด คำค้น ช่วงเวลา) → 2) pandas คัดรายการ → 3) LLM ตอบจากรายการที่คัดได้
 ถ้าคัดได้ 0 รายการและไม่มีตัวเลขที่เกี่ยว จะตอบว่าไม่พบข้อมูลโดยไม่เรียก LLM ขั้นที่ 3"""
 import json
+import os
+import re
 from datetime import timedelta
 
 import pandas as pd
 
 from core import analyze, db, llm
-from core.process import CATEGORIES
+from core.process import CATEGORIES, SENTIMENTS
 
 MAX_ROWS = 30
 SOURCES = {"news": "ข่าว", "rss": "ข่าว", "website": "เว็บไซต์บริษัท", "set": "ประกาศ SET", "review": "รีวิวแอป"}
@@ -18,8 +20,11 @@ Companies in the system (answer with the main name before the brackets): {compan
 Categories: product_price, promotion, news_pr, review, financial, hr, other
 Question: {question}
 Return ONLY JSON: {{"companies": [names from the list above, or [] for all],
-"categories": [categories that fit, or [] for any], "keywords": [Thai/English words that must appear
-in matching items, short (1–3 words each), or [] if the question is general],
+"categories": [categories that fit, or [] for any],
+"sentiments": [positive/neutral/negative if the question asks for good or bad news, else []],
+"keywords": [specific topics, products, places or names that must appear in matching items, short
+(1–3 words each, spelled as in news), or [] — never generic words such as ข่าว, ข่าวลบ, โปร, โปรโมชัน, สินค้าใหม่,
+ล่าสุด, อะไรบ้าง, หุ้น, because categories/sentiments already cover them],
 "days": number of recent days the question asks about or null, "needs_numbers": true if the question is about
 revenue, profit, ratios, ranking in the industry or stock price, else false}}"""
 
@@ -39,7 +44,7 @@ Question: {question}
 
 
 def parse(question, companies):
-    """คำถาม → {"companies", "categories", "keywords", "days", "needs_numbers"} (1 LLM call)"""
+    """คำถาม → {"companies", "categories", "sentiments", "keywords", "days", "needs_numbers"} (1 LLM call)"""
     aliases = {r["name"]: r["aliases"][:3] for r in db.get_companies(companies)}  # บาร์บีคิวพลาซ่า → ฟู้ดแพชชั่น
     listing = "; ".join(f"{c} (also called: {', '.join(aliases[c])})" if aliases.get(c) else c for c in companies)
     try:
@@ -51,6 +56,7 @@ def parse(question, companies):
     return {
         "companies": [keep[c.casefold()] for c in q.get("companies") or [] if isinstance(c, str) and c.casefold() in keep],
         "categories": [c for c in q.get("categories") or [] if c in CATEGORIES],
+        "sentiments": [x for x in q.get("sentiments") or [] if x in SENTIMENTS],
         "keywords": [k.strip() for k in q.get("keywords") or [] if isinstance(k, str) and k.strip()][:6],
         "days": q.get("days") if isinstance(q.get("days"), int) and q.get("days") > 0 else None,
         "needs_numbers": bool(q.get("needs_numbers")),
@@ -58,24 +64,31 @@ def parse(question, companies):
 
 
 def retrieve(df, f):
-    """คัดรายการตามตัวกรอง เรียงตามจำนวนคำค้นที่เจอ แล้วตามความใหม่ (ไม่เกิน 30 รายการ)"""
+    """คัดรายการตามตัวกรอง เรียงตามจำนวนคำค้นที่เจอ แล้วตามความใหม่ (ไม่เกิน 30 รายการ)
+    คำค้นไม่เจอเลยแต่มีหมวด/น้ำเสียง → ใช้หมวด/น้ำเสียงแทน (LLM อาจสะกดคำค้นไม่ตรงข่าว)
+    ยกเว้นคำค้นเป็นชื่อแบรนด์ที่ไม่มีในระบบ (เช่น Shopee) และไม่ได้ระบุบริษัท → ตอบว่าไม่พบ ไม่เอาข่าวบริษัทอื่นมาตอบ"""
     if df.empty:
         return df
     v = df[df["category"] != "irrelevant"] if "category" in df else df
     if f["companies"]:
         v = v[v["company"].isin(f["companies"])]
     if f["days"]:
-        v = v[v["published_dt"] >= pd.Timestamp.now(tz="UTC") - timedelta(days=f["days"])]
+        # โหมดเดโม: นับจากข่าวล่าสุดในชุดข้อมูล ไม่ใช่วันนี้ (ชุดเดโมไม่ได้อัปเดต)
+        anchor = (v["published_dt"].max() if os.environ.get("CC_DEMO") and not v.empty
+                  else pd.Timestamp.now(tz="UTC"))
+        v = v[v["published_dt"] >= anchor - timedelta(days=f["days"])]
+    if f.get("sentiments"):
+        v = v[v["sentiment"].isin(f["sentiments"])]
+    by_category = v[v["category"].isin(f["categories"])] if f["categories"] else v
     if f["keywords"] and not v.empty:
         # มีคำค้น: ต้องเจออย่างน้อย 1 คำ หมวดที่ตรงได้คะแนนเพิ่ม (ไม่ตัดทิ้ง เพราะหมวดที่ LLM จัดอาจไม่ตรงคำถาม)
         text = (v["title"].fillna("") + " " + v["summary"].fillna("") + " " + v["content"].fillna("")).str.lower()
         hits = sum(text.str.contains(k.lower(), regex=False).astype(int) for k in f["keywords"])
-        v = v.assign(_score=hits * 2 + v["category"].isin(f["categories"]).astype(int))[hits > 0]
-    elif f["categories"]:
-        v = v[v["category"].isin(f["categories"])].assign(_score=0)
-    else:
-        v = v.assign(_score=0)
-    return v.sort_values(["_score", "published_dt"], ascending=False).head(MAX_ROWS)
+        matched = v.assign(_score=hits * 2 + v["category"].isin(f["categories"]).astype(int))[hits > 0]
+        brand = not f["companies"] and any(re.search(r"[A-Z]", k) for k in f["keywords"])
+        if not matched.empty or brand or not (f["categories"] or f.get("sentiments")):
+            return matched.sort_values(["_score", "published_dt"], ascending=False).head(MAX_ROWS)
+    return by_category.assign(_score=0).sort_values("published_dt", ascending=False).head(MAX_ROWS)
 
 
 def answer(question, df, companies, fin=None, sector=None, price=None):
