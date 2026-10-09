@@ -4,9 +4,9 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
-from core import analyze, ask, benchmark, collect, db, impact
+from core import analyze, ask, benchmark, collect, db, export, impact
 from ui import charts, insights
-from ui.common import fmt_time, friendly_errors
+from ui.common import ago, fmt_time, friendly_errors
 from ui.labels import CATEGORY_TH, GAP_ITEM_TH, GAP_TYPE_TH, GLOSSARY, SENTIMENT_COLORS, SENTIMENT_TH
 
 PERIODS = {"7 วัน": 7, "30 วัน": 30, "90 วัน": 90, "ทั้งหมด": None}
@@ -194,8 +194,18 @@ def tab_summary(res, v, f, active, scope, on_report):
                     rewrite_report(res, v, scope, on_report)
                     st.rerun()
         st.markdown(res["report"])
-        st.download_button("ดาวน์โหลดรายงาน (.md)", res["report"], "report.md", "text/markdown",
-                           icon=":material/download:", on_click="ignore")
+        title = (f"{res['self_name']} vs " + ", ".join(c for c in res["companies"] if c != res["self_name"])
+                 if res["self_name"] else " · ".join(res["companies"]))
+        d1, d2 = st.columns(2)
+        d1.download_button("ดาวน์โหลด Word (.docx)",
+                           export.report_docx(res["report"], f"Competitor Compare: {title}",
+                                              f"เขียนเมื่อ {fmt_time(res['report_at'])} · ทุกตัวเลขมาจากข้อมูลที่ระบบดึงมา "
+                                              "ลิงก์ [n] เปิดแหล่งที่มาได้"),
+                           f"report_{res['report_id']}.docx",
+                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                           icon=":material/description:", on_click="ignore", width="stretch")
+        d2.download_button("Markdown (.md)", res["report"], "report.md", "text/markdown",
+                           icon=":material/download:", on_click="ignore", width="stretch")
     with right:
         st.markdown("##### น้ำเสียงข่าว")
         if v["b"].empty:
@@ -206,6 +216,48 @@ def tab_summary(res, v, f, active, scope, on_report):
         st.caption("แต่ละแถบคือข่าวทั้งหมดของบริษัทนั้น แบ่งเป็น % ข่าวบวก/กลาง/ลบ")
 
 
+def market_tables(v):
+    """อันดับในหมวดและราคาหุ้นหลังข่าว (ตามตัวกรอง) สำหรับส่งให้รายงาน/คำถาม"""
+    companies = benchmark.symbols_of(v["companies"])
+    if not companies:
+        return {"sector": None, "price": None}
+    return {"sector": benchmark.table(companies), "price": impact.events(v["df"], companies)}
+
+
+def key_points(res, v):
+    """สิ่งที่ควรรู้: 3–5 ข้อสำคัญจากทุกส่วน คิดจากข้อมูลโดยระบบ (ไม่ใช่ LLM) แต่ละข้อมีที่มา"""
+    points = []
+    high = [c for c in (res.get("changes") or []) if c["level"] == "high"]
+    if high:
+        points.append(f"ตั้งแต่รอบก่อนมี **{len(high)} เรื่องสำคัญ** เช่น "
+                      + "; ".join(f"{c['company']} {c['text']}" for c in high[:2]))
+    m = market_tables(v)
+    if m["sector"] is not None and not m["sector"].empty:
+        me = v["self_name"]
+        tb = m["sector"][m["sector"]["company"] == me] if me in set(m["sector"]["company"]) else m["sector"]
+        points += benchmark.highlights(tb)[:1 if me else 2]
+    if m["price"] is not None and not m["price"].empty:
+        for _, r in m["price"][m["price"]["big"]].head(2).iterrows():
+            move = r["r3_pct"] if pd.notna(r["r3_pct"]) else r["r1_pct"]
+            title = r["titles"][0][:70]
+            link = f"[{title}]({r['urls'][0]})" if r["urls"] and r["urls"][0] else title
+            points.append(f"**{r['company']}** หุ้นขยับ {move:+.1f}% หลังข่าว {r['date']}: {link}")
+    gap = v["gap"]
+    if not gap.empty:
+        g = gap[gap["type"].isin(["sentiment", "finance", "review"])]
+        if not g.empty:
+            r = g.loc[g["gap_pts"].abs().idxmax()]
+            label = GAP_ITEM_TH.get(r["item"], r["item"]).split(" (")[0]
+            points.append(f"**{v['self_name']}** ต่างจากคู่แข่งมากที่สุดเรื่อง {label}: "
+                          f"{r['us_pct']:g} เทียบค่าเฉลี่ยคู่แข่ง {r['competitor_avg_pct']:g} ({r['gap_pts']:+g} จุด)")
+    if not points:
+        return
+    with st.container(border=True):
+        st.markdown("##### สิ่งที่ควรรู้")
+        st.markdown("\n".join(f"- {p}" for p in points[:5]))
+        st.caption("คิดจากข้อมูลโดยระบบ ไม่ใช่ LLM · รายละเอียดอยู่ในแท็บด้านล่าง")
+
+
 def rewrite_report(res, v, scope, on_report):
     self_name = v["self_name"] if not v["gap"].empty else None
     mode = "phase1" if not self_name else ("phase3" if res["mode"] == "discover" else "phase2")
@@ -213,7 +265,8 @@ def rewrite_report(res, v, scope, on_report):
     analyze.write_report(v["a"], v["b"], v["c"], self_name=self_name, gap=v["gap"] if self_name else None,
                          mode=mode, reviews=v["reviews"], fin=v["fin"], scope=full_scope, groups=v["groups"],
                          changes=res.get("changes"),
-                         internal=v["internal"] if st.session_state.get("internal_llm", True) else None)
+                         internal=v["internal"] if st.session_state.get("internal_llm", True) else None,
+                         **market_tables(v))
     on_report(db.latest_report(mode), scope)
 
 
@@ -596,16 +649,19 @@ def tab_ask(res):
 
 def show(res, on_report):
     head, gloss = st.columns([6, 1], vertical_alignment="center")
-    counts = res["df"]["แหล่ง"].value_counts()
-    head.caption(f"{' · '.join(res['companies'])} · "
-                 + " · ".join(f"{label} {n}" for label, n in counts.items())
-                 + f" · อัปเดตล่าสุด {fmt_time(res['fetched_at'])}")
+    fresh = []  # จำนวนต่อแหล่ง + ดึงล่าสุดเมื่อไร
+    if not res["df"].empty:
+        by_source = res["df"].groupby("แหล่ง")["fetched_at"].agg(["size", "max"])
+        fresh = [f"{label} {row['size']} (ดึง {ago(row['max'])})" for label, row in by_source.iterrows()]
+    if res["fin_raw"]:
+        fresh.append(f"งบ SET {len(res['fin_raw'])} บริษัท "
+                     f"(ดึง {ago(max(f['fetched_at'] for f in res['fin_raw'].values()))})")
+    head.caption(f"{' · '.join(res['companies'])} · " + " · ".join(fresh))
     if res.get("focus_label"):
         head.caption(f"วิเคราะห์เฉพาะเรื่อง: **{res['focus_label']}**")
     with gloss:
         glossary()
 
-    changes_box(res)
     f = filter_bar(res)
     scope = describe(f)
     active = bool(scope)
@@ -616,6 +672,8 @@ def show(res, on_report):
         st.warning("ไม่มีข้อมูลตามตัวกรองนี้ ลองขยายช่วงเวลาหรือกด “ล้าง”")
         return
 
+    key_points(res, v)
+    changes_box(res)
     kpi_cards(v)
     has_gap = bool(v["self_name"]) and not v["gap"].empty
     names = ["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["เจาะลึก", "ถามข้อมูล", "ข้อมูลทั้งหมด"]

@@ -34,7 +34,7 @@ def _upload(self_name):
 def render(self_name):
     current = db.internal_metrics()
     title = "ข้อมูลภายในบริษัท" + (f" ({len(current)} ค่า)" if not current.empty else "")
-    with st.expander(title, icon=":material/upload_file:"):
+    with st.expander(title, icon=":material/upload_file:", expanded=True):
         st.caption("อัปโหลดตัวเลขที่มีแค่ในบริษัท เช่น ยอดขาย ลูกค้าใหม่ NPS ส่วนแบ่งตลาด (ของเราหรือที่ประเมินคู่แข่ง) "
                    "ระบบจะเพิ่มในตาราง “เรา vs คู่แข่ง” แท็บเจาะลึก และในรายงาน · ใช้ “เรา” แทนชื่อบริษัทเราได้")
         c1, c2 = st.columns([3, 1], vertical_alignment="center")

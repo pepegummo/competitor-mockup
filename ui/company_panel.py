@@ -97,7 +97,7 @@ def render(names, self_name, global_sources, advanced, members=None):
     rows = db.get_companies(names)
     missing_apps = sum(1 for r in rows if not r["appstore_id"] and not r["play_app_id"])
     title = "แหล่งข้อมูลของแต่ละบริษัท" + (f" · {missing_apps} บริษัทยังไม่ได้ตั้งค่าแอป" if missing_apps else "")
-    with st.expander(title, icon=":material/tune:"):
+    with st.expander(title, icon=":material/tune:", expanded=True):
         c1, c2 = st.columns([1.4, 3])
         if c1.button("หาชื่อเรียก ชื่อหุ้น และแอปอัตโนมัติ", icon=":material/auto_fix_high:",
                      help="ใช้ LLM 1 ครั้ง + ค้น App Store/Google Play เติมเฉพาะช่องที่ยังว่าง"):

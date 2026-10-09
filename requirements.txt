@@ -10,3 +10,4 @@ trafilatura
 googlenewsdecoder
 selectolax<1.0  # googlenewsdecoder still uses the pre-1.0 selectolax API
 openpyxl
+python-docx

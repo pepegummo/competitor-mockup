@@ -430,31 +430,42 @@ else:
     upcoming = ([self_name] if self_name else []) + competitors
     panel_self = self_name
 upcoming = list(dict.fromkeys(upcoming))
-members = {}
-if with_groups:
-    group_panel.render(upcoming)
-    group_panel.register(upcoming)
-    members = group_panel.picked(upcoming)
-company_panel.render(upcoming + list(members), panel_self, picked, adv, members)
-internal_panel.render(panel_self or (res or {}).get("self_name"))
-if watch_panel.render(res, open_run):
-    st.rerun()
+
+# แท็บตั้งค่าแยกจากผล หน้าผลจึงไม่ถูกดันลงล่าง (ทุกแท็บรันทุกรอบ ค่าที่เลือกไว้ไม่หาย)
+tab_res, tab_comp, tab_watch, tab_int = st.tabs(
+    [":material/insights: ผลวิเคราะห์", ":material/tune: บริษัทและแหล่งข้อมูล",
+     ":material/schedule: ติดตามอัตโนมัติ", ":material/upload_file: ข้อมูลภายใน"])
+with tab_comp:
+    members = {}
+    if not upcoming:
+        st.caption("เลือกบริษัทที่แถบซ้ายก่อน แล้วตั้งค่าแหล่งข้อมูลและบริษัทในเครือของแต่ละบริษัทได้ที่นี่")
+    if with_groups:
+        group_panel.render(upcoming)
+        group_panel.register(upcoming)
+        members = group_panel.picked(upcoming)
+    company_panel.render(upcoming + list(members), panel_self, picked, adv, members)
+with tab_int:
+    internal_panel.render(panel_self or (res or {}).get("self_name"))
+with tab_watch:
+    if watch_panel.render(res, open_run):
+        st.rerun()
 res = st.session_state.result
 
-if mode == "discover" and disc and disc["pending"]:
-    panel = st.empty()
-    with panel.container():
-        confirmed, names, origins = confirm_panel(disc)
-    if not confirmed:
+with tab_res:
+    if mode == "discover" and disc and disc["pending"]:
+        panel = st.empty()
+        with panel.container():
+            confirmed, names, origins = confirm_panel(disc)
+        if not confirmed:
+            st.stop()
+        panel.empty()
+        with friendly_errors():
+            res = finish(*run_pipeline(names, self_name=disc["company"], origins=origins, mode="discover",
+                                       opts=opts, focus=focus, with_groups=with_groups))
+            disc["pending"] = False
+
+    if not res or (res["df"].empty and res["fin"].empty):
+        empty_state()
         st.stop()
-    panel.empty()
-    with friendly_errors():
-        res = finish(*run_pipeline(names, self_name=disc["company"], origins=origins, mode="discover",
-                                   opts=opts, focus=focus, with_groups=with_groups))
-        disc["pending"] = False
 
-if not res or (res["df"].empty and res["fin"].empty):
-    empty_state()
-    st.stop()
-
-results.show(res, on_new_report)
+    results.show(res, on_new_report)

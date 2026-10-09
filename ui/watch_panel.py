@@ -129,7 +129,7 @@ def render(res, on_open):
     """คืน True ถ้าผู้ใช้กดเปิดผลของรอบอื่น (หน้าต้อง rerun)"""
     count = len(db.watchlists())
     with st.expander(f"ติดตามอัตโนมัติ ({count} ชุด)" if count else "ติดตามอัตโนมัติ",
-                     icon=":material/notifications_active:"):
+                     icon=":material/notifications_active:", expanded=True):
         st.caption("บันทึกชุดบริษัทที่วิเคราะห์ไว้ ระบบจะดึงข้อมูลใหม่ เทียบกับรอบก่อน "
                    "และบอกว่าอะไรเปลี่ยน (ทั้งในแอปและส่งแจ้งเตือน)")
         if res:
