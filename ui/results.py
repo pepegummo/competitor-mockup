@@ -238,10 +238,9 @@ def key_points(res, v):
         points += benchmark.highlights(tb)[:1 if me else 2]
     if m["price"] is not None and not m["price"].empty:
         for _, r in m["price"][m["price"]["big"]].head(2).iterrows():
-            move = r["r3_pct"] if pd.notna(r["r3_pct"]) else r["r1_pct"]
             title = r["titles"][0][:70]
             link = f"[{title}]({r['urls'][0]})" if r["urls"] and r["urls"][0] else title
-            points.append(f"**{r['company']}** หุ้นขยับ {move:+.1f}% หลังข่าว {r['date']}: {link}")
+            points.append(f"**{r['company']}** หุ้นขยับ {impact.describe(r)} หลังข่าว {r['date']}: {link}")
     gap = v["gap"]
     if not gap.empty:
         g = gap[gap["type"].isin(["sentiment", "finance", "review"])]
@@ -517,15 +516,15 @@ def section_price(v):
     if not px or ev.empty:
         st.caption("ยังไม่มีราคาหุ้นหรือข่าวในช่วงที่มีราคา")
         return
-    st.caption("วันที่มีข่าวหรือประกาศ SET แล้วหุ้นขยับเท่าไรใน 1 และ 3 วันทำการ เทียบราคาปิดก่อนข่าว · "
-               f"“ผิดปกติ” = ขยับเกิน {impact.Z_LIMIT:.0f} เท่าของความผันผวนรายวันปกติของหุ้นตัวนั้น · "
-               "ข่าวหลัง 16:30 นับเป็นวันทำการถัดไป · ยังไม่ได้หักผลของตลาดรวมและวันขึ้นเครื่องหมาย XD · ไม่ผ่าน LLM")
+    st.caption("วันที่มีข่าวหรือประกาศ SET แล้วหุ้นขยับเท่าไรใน 1 และ 3 วันทำการ เทียบราคาปิดก่อนข่าว "
+               "และหักผลของตลาดรวม (ดัชนี SET หรือ mai ช่วงเดียวกัน) · "
+               f"“ผิดปกติ” = ส่วนที่หักตลาดแล้วเกิน {impact.Z_LIMIT:.0f} เท่าของความผันผวนปกติของหุ้นตัวนั้น · "
+               "ข่าวหลัง 16:30 นับเป็นวันทำการถัดไป · ยังไม่หักวันขึ้นเครื่องหมาย XD · ไม่ผ่าน LLM")
     big = ev[ev["big"]]
     lines = []
     for _, r in big.head(3).iterrows():
-        move = r["r3_pct"] if pd.notna(r["r3_pct"]) else r["r1_pct"]
         link = f"[{r['titles'][0][:80]}]({r['urls'][0]})" if r["urls"] and r["urls"][0] else r["titles"][0][:80]
-        lines.append(f"**{r['company']}** {r['date']}: {move:+.1f}% ใน 3 วัน ({abs(r['z']):.1f} เท่าของปกติ) หลัง {link}")
+        lines.append(f"**{r['company']}** {r['date']}: {impact.describe(r)} หลัง {link}")
     insights.show(st, lines or ["ไม่มีวันไหนที่หุ้นขยับผิดปกติหลังข่าวในช่วงนี้"])
     names = [n for n in v["companies"] if n in companies and companies[n] in px]
     pick = st.segmented_control("บริษัท", names, key="px_pick", default=names[0],
@@ -537,12 +536,17 @@ def section_price(v):
                                น้ำเสียง=ev["sentiment"].map(SENTIMENT_TH))
     st.dataframe(
         table, hide_index=True, width="stretch",
-        column_order=["company", "date", "r1_pct", "r3_pct", "z", "big", "news", "น้ำเสียง", "หัวข้อ", "ลิงก์"],
+        column_order=["company", "date", "r1_pct", "r3_pct", "market_r3_pct", "ar3_pct", "z", "big", "news",
+                      "น้ำเสียง", "หัวข้อ", "ลิงก์"],
         column_config={
             "company": st.column_config.TextColumn("บริษัท"),
             "date": st.column_config.TextColumn("วันทำการ"),
             "r1_pct": st.column_config.NumberColumn("1 วัน (%)", format="%+.2f"),
             "r3_pct": st.column_config.NumberColumn("3 วัน (%)", format="%+.2f"),
+            "market_r3_pct": st.column_config.NumberColumn("ตลาด 3 วัน (%)", format="%+.2f",
+                                                           help="ดัชนี SET (หรือ mai) ช่วงเดียวกัน"),
+            "ar3_pct": st.column_config.NumberColumn("หักตลาดแล้ว (%)", format="%+.2f",
+                                                     help="3 วันของหุ้น − 3 วันของตลาด"),
             "z": st.column_config.NumberColumn("เท่าของปกติ", format="%+.1f",
                                                help="ผลตอบแทน ÷ ความผันผวนรายวันปกติของหุ้น (ติดลบ = ลง)"),
             "big": st.column_config.CheckboxColumn("ผิดปกติ"),

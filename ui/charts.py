@@ -237,5 +237,6 @@ def price_news_chart(prices, ev):
         tooltip=[alt.Tooltip("วันที่:T", format="%d %b %Y"), "หัวข้อ:N", "news:Q",
                  alt.Tooltip("r1_pct:Q", title="1 วัน (%)", format="+.2f"),
                  alt.Tooltip("r3_pct:Q", title="3 วัน (%)", format="+.2f"),
+                 alt.Tooltip("ar3_pct:Q", title="หักตลาดแล้ว (%)", format="+.2f"),
                  alt.Tooltip("z:Q", title="เท่าของปกติ"), "ผิดปกติ:N"])
     return (line + dots).properties(height=320)

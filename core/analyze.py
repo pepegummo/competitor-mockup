@@ -90,8 +90,9 @@ median = ค่ามัธยฐานของหมวด, ตัวเลข
 PRICE_SECTION = """
 
 [Table P: ราคาหุ้นหลังข่าว — วันที่มีข่าว/ประกาศแล้วหุ้นขยับผิดปกติ (คิดจากราคาปิด SET ไม่ใช่การเดา)
-r1_pct/r3_pct = % เปลี่ยนของราคาใน 1/3 วันทำการเทียบกับราคาปิดก่อนข่าว, z = กี่เท่าของความผันผวนปกติของหุ้นนั้น
-headlines = ข่าวของวันนั้น ยังไม่ได้หักผลของตลาดรวม จึงใช้คำว่า "หุ้นขยับหลังข่าว" ไม่ใช่ "ข่าวทำให้หุ้นขยับ"]
+r1_pct/r3_pct = % เปลี่ยนของราคาใน 1/3 วันทำการเทียบกับราคาปิดก่อนข่าว, market_r3_pct = ดัชนีตลาดช่วงเดียวกัน,
+ar3_pct = หักผลของตลาดแล้ว, z = กี่เท่าของความผันผวนปกติ (คิดจากส่วนที่หักตลาดแล้ว)
+headlines = ข่าวของวันนั้น ใช้คำว่า "หุ้นขยับหลังข่าว" ไม่ใช่ "ข่าวทำให้หุ้นขยับ"]
 {p}"""
 
 
@@ -417,7 +418,8 @@ def write_report(table_a, table_b, table_c, self_name=None, gap=None, mode=None,
         p = price[price["big"]].head(8)
         p_tab = pd.DataFrame({
             "ref": [add_ref(t[0], u[0]) if u and u[0] else "" for t, u in zip(p["titles"], p["urls"])],
-            "company": p["company"], "date": p["date"], "r1_pct": p["r1_pct"], "r3_pct": p["r3_pct"], "z": p["z"],
+            "company": p["company"], "date": p["date"], "r1_pct": p["r1_pct"], "r3_pct": p["r3_pct"],
+            "market_r3_pct": p.get("market_r3_pct"), "ar3_pct": p.get("ar3_pct"), "z": p["z"],
             "headlines": [" / ".join(t[:2])[:200] for t in p["titles"]]})
         prompt += PRICE_SECTION.format(p=p_tab.to_markdown(index=False))
     if changes:

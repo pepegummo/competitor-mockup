@@ -7,6 +7,8 @@ from datetime import timedelta
 import pandas as pd
 import requests
 
+from core import impact
+
 WINDOW_DAYS = 30        # ตัวเลขใน snapshot คิดจากข่าว/รีวิวที่เผยแพร่ใน 30 วันล่าสุด
 MIN_NEWS = 5            # ข่าวน้อยกว่านี้ % น้ำเสียงแกว่งง่าย ไม่เตือน
 NEG_JUMP_PTS = 10       # ข่าวลบเปลี่ยนตั้งแต่ 10 จุด
@@ -85,9 +87,7 @@ def changes(companies, df, snap, previous, events=None):
         if "price_moves" in old and cur.get("price_moves"):  # รอบก่อนยังไม่มีข้อมูลนี้ = ไม่เตือนย้อนหลัง
             for day in sorted(set(cur["price_moves"]) - set(old["price_moves"])):
                 ev = events[(events["company"] == name) & (events["date"] == day)].iloc[0]
-                move = ev["r3_pct"] if pd.notna(ev["r3_pct"]) else ev["r1_pct"]
-                add(name, "high", "price_move",
-                    f"หุ้น {ev['symbol']} ขยับ {move:+.1f}% หลังข่าววันที่ {day} ({abs(ev['z']):.1f} เท่าของปกติ)",
+                add(name, "high", "price_move", f"หุ้น {ev['symbol']} ขยับ {impact.describe(ev)} หลังข่าววันที่ {day}",
                     [{"title": t, "url": u} for t, u in zip(ev["titles"], ev["urls"])])
 
         if cur.get("fin_period") and cur.get("fin_period") != old.get("fin_period"):

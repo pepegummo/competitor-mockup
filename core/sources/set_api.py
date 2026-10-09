@@ -123,12 +123,26 @@ def highlight(symbol):
     }
 
 
+def _quotes(data):
+    return [{"date": q["localDatetime"][:10], "close": q["price"], "volume": q.get("volume")}
+            for q in (data or {}).get("quotations", []) if q.get("price") is not None]
+
+
 def price_history(symbol, period="3M"):
     """ราคาปิดรายวัน [{date: "YYYY-MM-DD", close, volume}] เรียงเก่าไปใหม่ · period: 1M 3M 6M 1Y"""
-    data = _get(f"/api/set/stock/{symbol.strip().upper()}/chart-quotation", period=period,
-                accumulated="false") or {}
-    return [{"date": q["localDatetime"][:10], "close": q["price"], "volume": q.get("volume")}
-            for q in data.get("quotations", []) if q.get("price") is not None]
+    return _quotes(_get(f"/api/set/stock/{symbol.strip().upper()}/chart-quotation", period=period,
+                        accumulated="false"))
+
+
+def index_history(index="SET", period="3M"):
+    """ดัชนีรายวัน (SET หรือ mai) รูปแบบเดียวกับ price_history ใช้หักผลของตลาดรวม"""
+    return _quotes(_get(f"/api/set/index/{index}/chart-quotation", period=period, accumulated="false"))
+
+
+def market_of(symbol):
+    """ดัชนีที่ใช้เทียบ: "SET" หรือ "mai" ตามตลาดที่หุ้นจดทะเบียน"""
+    info = listed_companies().get(symbol.strip().upper()) or {}
+    return "mai" if info.get("market") == "mai" else "SET"
 
 
 def _symbol(company):

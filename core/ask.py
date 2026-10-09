@@ -134,6 +134,7 @@ def answer(question, df, companies, fin=None, sector=None, price=None):
                 p_tab = pd.DataFrame({
                     "ref": [add_ref(t[0], u[0]) if u and u[0] else "" for t, u in zip(p["titles"], p["urls"])],
                     "company": p["company"], "date": p["date"], "r1_pct": p["r1_pct"], "r3_pct": p["r3_pct"],
+                    "ar3_pct": p.get("ar3_pct"),
                     "z": p["z"], "abnormal": p["big"], "headline": [t[0][:120] for t in p["titles"]]})
                 numbers += ("\n\n[Stock moves after news: r1/r3 = % เปลี่ยน 1/3 วันทำการ z = เท่าของความผันผวนปกติ]\n"
                             + p_tab.to_markdown(index=False))
