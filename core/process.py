@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from itertools import groupby
 
 from core import db, llm
@@ -7,6 +8,7 @@ CATEGORIES = {"product_price", "promotion", "news_pr", "review", "financial", "h
 IRRELEVANT = "irrelevant"  # เก็บไว้เป็น fact เพื่อไม่ส่งให้ LLM ซ้ำ แต่ไม่นำไปวิเคราะห์ (db.facts_df ตัดออก)
 CHECKED_SOURCES = {"news", "rss"}  # แหล่งที่ค้นด้วยชื่อ จึงอาจได้เรื่องอื่นที่ชื่อซ้ำ
 SENTIMENTS = {"positive", "neutral", "negative"}
+LLM_WORKERS = 4          # ชุดที่ส่ง LLM พร้อมกัน
 BATCH_SIZE = 10          # หัวข้ออย่างเดียว
 BATCH_SIZE_CONTENT = 5   # มีเนื้อหา/รีวิว prompt ยาวขึ้น จึงส่งทีละน้อยลง
 CONTENT_CHARS = 600
@@ -124,10 +126,15 @@ def classify_pending(company_ids, on_progress=None):
     profiles = {r["name"]: describe(r) for r in db.get_companies(list({d["company"] for d in docs}))}
     examples = {name: examples_text(name) for name in profiles} if batches else {}
 
-    for n, (company_id, company, batch) in enumerate(batches, 1):
+    # ส่ง LLM หลายชุดพร้อมกัน (ช่วงที่ใช้เวลามากที่สุดของการวิเคราะห์) แล้วบันทึกผลตามลำดับในเธรดหลัก
+    pool = ThreadPoolExecutor(LLM_WORKERS)
+    futures = [pool.submit(_classify_batch, profiles.get(company, company), batch, examples.get(company, ""))
+               for company_id, company, batch in batches]
+    pool.shutdown(wait=False)
+    for n, ((company_id, company, batch), future) in enumerate(zip(batches, futures), 1):
         if on_progress:
             on_progress(f"Classify {company} ({n}/{len(batches)})")
-        result = _classify_batch(profiles.get(company, company), batch, examples.get(company, ""))
+        result = future.result()
         if result is None:
             skipped += 1
             continue

@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS market_cache (
 def connect():
     """เปิด connection, commit เมื่อสำเร็จ แล้วปิดเสมอ"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)  # ดึง/จัดหมวดหลายเธรดพร้อมกัน: รอ lock แทนการ error
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:

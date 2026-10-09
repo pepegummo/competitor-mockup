@@ -1,11 +1,15 @@
 """ขั้นตอนวิเคราะห์ทั้งหมด (ดึงข้อมูล → จัดหมวด → เทียบรอบก่อน → เขียนรายงาน) แยกจากหน้าเว็บ
 เพื่อให้ทั้งแอป Streamlit และการรันอัตโนมัติ (monitor.py) ใช้ชุดเดียวกัน
 log(text, kind): kind = "step" หัวข้อขั้น, "line" ผลย่อย, "note" หมายเหตุเล็ก, "status" ข้อความสถานะ"""
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
 
 from core import analyze, benchmark, collect, db, impact, monitor, process, profile
 from core.sources import SourceSkipped, set_api
 from ui.labels import CATEGORY_TH, FINANCIALS_KEY  # ไฟล์ข้อความล้วน ไม่มี streamlit
+
+FETCH_WORKERS = 3  # บริษัทที่ดึงพร้อมกัน
 
 DEFAULT_OPTS = {"sources": ["google_news"], "fulltext": False, "review_limit": 20, "financials": False,
                 "limit": 20, "internal": True}
@@ -95,12 +99,20 @@ def run(companies, self_name=None, mode="compare", opts=None, focus=None, groups
     if opts["fulltext"]:
         log("ดึงข้อมูลและเนื้อหาเต็ม (อาจใช้เวลาหลายนาที)...", "status")
     empty = []
-    for cid, row in zip(ids, db.get_companies(companies)):
+    rows = db.get_companies(companies)
+
+    def fetch(cid, row):
+        return collect.collect_company(cid, row["name"], limit=opts["limit"],
+                                       sources=enabled_sources(row, opts["sources"]), fulltext_on=opts["fulltext"],
+                                       review_limit=opts["review_limit"], focus=focus)
+
+    # ดึงหลายบริษัทพร้อมกัน แต่แสดงผลตามลำดับในเธรดหลัก (หน้าเว็บเขียนจากเธรดอื่นไม่ได้)
+    with ThreadPoolExecutor(FETCH_WORKERS) as pool:
+        fetched = [pool.submit(fetch, cid, row) for cid, row in zip(ids, rows)]
+    for row, future in zip(rows, fetched):
         name = row["name"]
         sources = enabled_sources(row, opts["sources"])
-        stats, notes = collect.collect_company(cid, name, limit=opts["limit"], sources=sources,
-                                               fulltext_on=opts["fulltext"], review_limit=opts["review_limit"],
-                                               focus=focus)
+        stats, notes = future.result()
         parts = [f"{label} {n} (ใหม่ {a})" for label, (n, a) in stats.items()]
         off = [collect.SOURCES[k][1] for k in opts["sources"] if k not in sources]
         log(f"**{name}**: " + (" · ".join(parts) or "ไม่มีแหล่งที่ใช้ได้")
