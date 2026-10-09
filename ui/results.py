@@ -1,13 +1,16 @@
-"""หน้าผลลัพธ์: แถบตัวกรอง (กรองทุกกราฟ/ตาราง) → การ์ดสรุปต่อบริษัท → 4 แท็บ"""
+"""หน้าผลลัพธ์: แถบตัวกรอง (กรองทุกกราฟ/ตาราง) → สิ่งที่ควรรู้ → การ์ดสรุปต่อบริษัท → แท็บ
+ส่วนย่อยของแท็บเจาะลึกและแท็บถามข้อมูลอยู่ใน ui/sections/"""
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
 
-from core import analyze, ask, benchmark, collect, db, export, impact
+from core import analyze, benchmark, collect, db, export, impact
 from ui import charts, insights
+from ui.sections import ask as ask_tab, finance, market, news
+from ui.sections.market import market_tables
 from ui.common import ago, fmt_time, friendly_errors
-from ui.labels import CATEGORY_TH, GAP_ITEM_TH, GAP_TYPE_TH, GLOSSARY, SENTIMENT_COLORS, SENTIMENT_TH
+from ui.labels import CATEGORY_TH, GAP_ITEM_TH, GAP_TYPE_TH, GLOSSARY, SENTIMENT_COLORS
 
 PERIODS = {"7 วัน": 7, "30 วัน": 30, "90 วัน": 90, "ทั้งหมด": None}
 FILTER_KEYS = ("flt_company", "flt_src", "flt_days", "flt_cat", "flt_sent", "flt_q")
@@ -216,14 +219,6 @@ def tab_summary(res, v, f, active, scope, on_report):
         st.caption("แต่ละแถบคือข่าวทั้งหมดของบริษัทนั้น แบ่งเป็น % ข่าวบวก/กลาง/ลบ")
 
 
-def market_tables(v):
-    """อันดับในหมวดและราคาหุ้นหลังข่าว (ตามตัวกรอง) สำหรับส่งให้รายงาน/คำถาม"""
-    companies = benchmark.symbols_of(v["companies"])
-    if not companies:
-        return {"sector": None, "price": None}
-    return {"sector": benchmark.table(companies), "price": impact.events(v["df"], companies)}
-
-
 def key_points(res, v):
     """สิ่งที่ควรรู้: 3–5 ข้อสำคัญจากทุกส่วน คิดจากข้อมูลโดยระบบ (ไม่ใช่ LLM) แต่ละข้อมีที่มา"""
     points = []
@@ -300,277 +295,21 @@ def tab_gap(v):
                    "แถวการเงินเทียบเฉพาะคู่แข่งที่อยู่ในตลาดหลักทรัพย์ฯ")
 
 
-def section_categories(v):
-    news = analyze.news_only(v["df"])
-    insights.show(st, insights.categories(news))
-    st.altair_chart(charts.category_chart(news, v["self_name"]), width="stretch")
-    with st.expander("จำนวนข่าวต่อหมวด"):
-        st.dataframe(v["a"].rename(columns=CATEGORY_TH).rename_axis(index="บริษัท", columns=None), width="stretch")
-        st.caption("แถวและคอลัมน์ “รวม” คือผลรวม")
-
-
-def section_reviews(v):
-    r = v["df"][v["df"]["source_type"] == "review"]
-    st.caption("รีวิวล่าสุดจาก App Store และ Google Play · ดาวมาจากผู้รีวิวโดยตรง ส่วนน้ำเสียงและสรุปมาจาก LLM")
-    insights.show(st, insights.reviews(v["reviews"]))
-    left, right = st.columns(2, gap="large")
-    with left:
-        st.markdown("##### คะแนนเฉลี่ย (ดาว)")
-        st.altair_chart(charts.stars_chart(r, v["self_name"]), width="stretch")
-    with right:
-        st.markdown("##### น้ำเสียงของรีวิว")
-        sent = (pd.crosstab(r["company"], r["sentiment"], normalize="index") * 100).round(1)
-        sent = sent.reindex(columns=["positive", "neutral", "negative"], fill_value=0)
-        st.altair_chart(charts.sentiment_chart(sent, v["self_name"]), width="stretch")
-    st.markdown("##### รีวิวล่าสุด")
-    st.dataframe(
-        r.sort_values("published_dt", ascending=False),
-        hide_index=True, width="stretch", height=380,
-        column_order=["วันที่", "company", "source_name", "rating", "น้ำเสียง", "content", "summary"],
-        column_config={
-            "company": st.column_config.TextColumn("บริษัท"),
-            "source_name": st.column_config.TextColumn("สโตร์"),
-            "rating": st.column_config.NumberColumn("ดาว", format="%d ★"),
-            "content": st.column_config.TextColumn("รีวิว", width="large"),
-            "summary": st.column_config.TextColumn("สรุป", width="medium"),
-        },
-    )
-
-
-BANK_COLUMNS = ("nii_mb", "nii_yoy_pct", "fee_income_mb", "fee_income_yoy_pct", "nim_approx_pct",
-                "cost_to_income_pct", "credit_cost_pct", "ldr_pct", "loans_mb", "deposits_mb")
-
-
-def section_banks(banks, self_name):
-    st.markdown("##### ตัวชี้วัดธนาคาร")
-    st.caption("คิดจากงบย่อที่ยื่น SET · ตัวเลขต่อปีแปลงจากงบสะสม (เช่น 6 เดือน × 2) · "
-               "ไม่มี NPL เพราะงบย่อของ SET ไม่มีข้อมูลนี้")
-    st.altair_chart(charts.bank_ratio_chart(banks, self_name), width="stretch")
-    st.dataframe(
-        banks, width="stretch",
-        column_config={
-            "company": st.column_config.TextColumn("บริษัท"),
-            "nii_mb": st.column_config.NumberColumn("รายได้ดอกเบี้ยสุทธิ (ลบ.)", format="localized"),
-            "nii_yoy_pct": st.column_config.NumberColumn("ดอกเบี้ยสุทธิโต (%)", format="%+.1f"),
-            "fee_income_mb": st.column_config.NumberColumn("ค่าธรรมเนียมสุทธิ (ลบ.)", format="localized"),
-            "fee_income_yoy_pct": st.column_config.NumberColumn("ค่าธรรมเนียมโต (%)", format="%+.1f"),
-            "nim_approx_pct": st.column_config.NumberColumn("NIM โดยประมาณ (%)", format="%.2f",
-                                                            help=GLOSSARY["NIM โดยประมาณ"]),
-            "cost_to_income_pct": st.column_config.NumberColumn("Cost to income (%)", format="%.1f",
-                                                                help=GLOSSARY["Cost to income"]),
-            "credit_cost_pct": st.column_config.NumberColumn("Credit cost (%)", format="%.2f",
-                                                             help=GLOSSARY["Credit cost"]),
-            "ldr_pct": st.column_config.NumberColumn("สินเชื่อ/เงินฝาก (%)", format="%.1f",
-                                                     help=GLOSSARY["สินเชื่อ/เงินฝาก (LDR)"]),
-            "loans_mb": st.column_config.NumberColumn("สินเชื่อสุทธิ (ลบ.)", format="localized"),
-            "deposits_mb": st.column_config.NumberColumn("เงินฝาก (ลบ.)", format="localized"),
-        },
-    )
-
-
-def section_finance(res, v):
-    fin, raw, self_name = v["fin"], v["fin_raw"], v["self_name"]
-    missing = [c for c in v["companies"] if c not in fin.index]
-    fetched = max(f["fetched_at"] for f in raw.values())
-    as_of = max(f["market"].get("as_of") or "" for f in raw.values())
-    st.caption(f"งบรวมที่บริษัทยื่นต่อตลาดหลักทรัพย์ฯ (ดึงเมื่อ {fmt_time(fetched)}) · ราคาหุ้น ณ {as_of} · "
-               "ตัวเงินหน่วยล้านบาท · ตัวกรองช่วงเวลา/หมวดไม่มีผลกับงบ"
-               + (f" · ไม่มีงบ: {', '.join(missing)}" if missing else ""))
-    insights.show(st, insights.finance(fin))
-    left, right = st.columns(2, gap="large")
-    with left:
-        st.markdown("##### รายได้และกำไรสุทธิรายปี")
-        chart = charts.finance_history_chart(raw, self_name)
-        if chart is not None:
-            st.altair_chart(chart, width="stretch")
-    with right:
-        st.markdown("##### เทียบงบรอบล่าสุด (%)")
-        st.altair_chart(charts.finance_ratio_chart(fin, self_name), width="stretch")
-        st.caption("รายได้/กำไรโต = เทียบช่วงเดียวกันปีก่อน (ถ้าปีก่อนขาดทุนจะไม่แสดง) · ROE มาจากงบทั้งปีล่าสุด")
-    order = charts.company_order(list(fin.index), self_name)
-    bank_cols = [c for c in BANK_COLUMNS if c in fin.columns]
-    st.dataframe(
-        fin.loc[order].drop(columns=bank_cols), width="stretch",
-        column_config={
-            "company": st.column_config.TextColumn("บริษัท"),
-            "symbol": st.column_config.TextColumn("ชื่อหุ้น"),
-            "sector": st.column_config.TextColumn("หมวดธุรกิจ (SET)"),
-            "period": st.column_config.TextColumn("งบรอบ", help="6M = ครึ่งปีแรก, 9M = 9 เดือน"),
-            "revenue_mb": st.column_config.NumberColumn("รายได้รวม (ลบ.)", format="localized",
-                                                        help="ธนาคารใช้รายได้จากการดำเนินงาน "
-                                                             "(ดอกเบี้ยสุทธิ + ค่าธรรมเนียมสุทธิ + อื่น ๆ)"),
-            "revenue_yoy_pct": st.column_config.NumberColumn("รายได้โต (%)", format="%+.1f",
-                                                             help="เทียบช่วงเดียวกันของปีก่อน"),
-            "net_profit_mb": st.column_config.NumberColumn("กำไรสุทธิ (ลบ.)", format="localized"),
-            "net_profit_yoy_pct": st.column_config.NumberColumn("กำไรโต (%)", format="%+.1f"),
-            "net_margin_pct": st.column_config.NumberColumn("อัตรากำไรสุทธิ (%)", format="%.1f",
-                                                            help=GLOSSARY["อัตรากำไรสุทธิ"]),
-            "ebitda_margin_pct": st.column_config.NumberColumn("อัตรา EBITDA (%)", format="%.1f",
-                                                               help=GLOSSARY["EBITDA"]),
-            "fy": st.column_config.NumberColumn("ปีงบ (ROE, D/E)", format="%d"),
-            "roe_pct": st.column_config.NumberColumn("ROE (%)", format="%.1f", help=GLOSSARY["ROE"]),
-            "de_ratio": st.column_config.NumberColumn("D/E (เท่า)", format="%.2f", help=GLOSSARY["D/E"]),
-            "market_cap_mb": st.column_config.NumberColumn("มูลค่าตลาด (ลบ.)", format="localized"),
-            "pe": st.column_config.NumberColumn("P/E (เท่า)", format="%.1f", help=GLOSSARY["P/E"]),
-            "dividend_yield_pct": st.column_config.NumberColumn("ปันผล (%)", format="%.2f"),
-        },
-    )
-    banks = fin.loc[order, bank_cols].dropna(how="all") if bank_cols else pd.DataFrame()
-    if not banks.empty:
-        section_banks(banks, self_name)
-    links =[f"[{f['symbol']} {f['latest']['period']}]({f['latest']['filed_url']})"
-             for f in raw.values() if f["latest"].get("filed_url")]
-    if links:
-        st.caption("งบฉบับเต็ม (zip): " + " · ".join(links))
-
-
-def section_trends(v):
-    news = analyze.news_only(v["df"])
-    st.caption("นับตามวันที่เผยแพร่ รายสัปดาห์ · ข้อมูลย้อนหลังจะยาวขึ้นเรื่อย ๆ เมื่อรันอัตโนมัติทุกวัน "
-               "(แต่ละรอบดึงได้เฉพาะข่าวล่าสุดของแต่ละแหล่ง)")
-    left, right = st.columns(2, gap="large")
-    with left:
-        st.markdown("##### จำนวนข่าวต่อสัปดาห์")
-        st.altair_chart(charts.weekly_volume_chart(news, v["self_name"]), width="stretch")
-    with right:
-        st.markdown("##### ข่าวลบต่อสัปดาห์ (%)")
-        st.altair_chart(charts.weekly_negative_chart(news, v["self_name"]), width="stretch")
-        st.caption("แสดงเฉพาะสัปดาห์ที่มีข่าวอย่างน้อย 3 ข่าว")
-    reviews = v["df"][v["df"]["source_type"] == "review"]
-    if reviews["rating"].notna().sum() >= 5:
-        st.markdown("##### คะแนนรีวิวเฉลี่ยต่อสัปดาห์")
-        st.altair_chart(charts.weekly_stars_chart(reviews, v["self_name"]), width="stretch")
-
-
-def section_internal(v):
-    table, units = v["internal"], v["internal"].attrs.get("units", {})
-    st.caption("ตัวเลขจากไฟล์ที่อัปโหลด (ไม่ได้มาจากแหล่งสาธารณะ) · แก้หรือเพิ่มได้ใน “ข้อมูลภายในบริษัท” ด้านบน")
-    metrics = list(table.columns)
-    pick = st.selectbox("ตัวชี้วัด", metrics, key="internal_pick") if len(metrics) > 1 else metrics[0]
-    u = units.get(pick, {})
-    st.altair_chart(charts.internal_chart(table, pick, v["self_name"], u.get("unit", "")), width="stretch")
-    st.dataframe(table.rename(columns=lambda m: f"{m} ({units.get(m, {}).get('unit')})"
-                              if units.get(m, {}).get("unit") else m),
-                 width="stretch")
-    periods = {m: x["period"] for m, x in units.items() if x.get("period")}
-    if periods:
-        st.caption("ช่วงเวลา: " + " · ".join(f"{m} {p}" for m, p in periods.items()))
-
-
-def section_sector(v):
-    companies = benchmark.symbols_of(v["companies"])
-    symbols = list(dict.fromkeys(companies.values()))
-    fr = benchmark.frames(symbols)
-    missing = [s for s in symbols if s not in fr]
-    if missing and st.button(f"ดึงตัวเลขทุกบริษัทในหมวดของ {', '.join(missing)} จาก SET",
-                             icon=":material/download:", key="bench_fetch",
-                             help="ไม่ใช้ LLM · ประมาณ 1 วินาทีต่อ 4 บริษัท · เก็บไว้ใช้ซ้ำ 1 วัน"):
-        with friendly_errors(), st.spinner("กำลังดึงตัวเลขทุกบริษัทในหมวด..."):
-            benchmark.refresh(missing, log=st.caption)
-        st.rerun()
-    if not fr:
-        st.caption("ยังไม่มีตัวเลขของหมวดธุรกิจ กดปุ่มด้านบนเพื่อดึงจาก SET")
-        return
-    tb = benchmark.table(companies)
-    st.caption("เทียบกับทุกบริษัทจดทะเบียนในหมวดธุรกิจเดียวกันของ SET (ไม่ใช่แค่คู่แข่งที่เลือก) · "
-               "ใช้งบทั้งปีล่าสุดของแต่ละบริษัท บริษัทที่ปีบัญชีจบกลางปีจะเป็นปีงบที่ต่างกัน · ไม่ผ่าน LLM")
-    insights.show(st, benchmark.highlights(tb))
-    by_group = {}
-    for name, sym in companies.items():
-        if sym in fr:
-            by_group.setdefault(fr[sym]["group"], []).append((name, sym))
-    labels = {g: f"{fr[members[0][1]]['name']} · {len(fr[members[0][1]]['df'])} บริษัท"
-              for g, members in by_group.items()}
-    group = (st.segmented_control("หมวด", list(by_group), format_func=labels.get, key="bench_group",
-                                  default=list(by_group)[0], label_visibility="collapsed")
-             if len(by_group) > 1 else list(by_group)[0]) or list(by_group)[0]
-    members = by_group[group]
-    df = fr[members[0][1]]["df"]
-    st.markdown(f"##### {labels[group]}")
-    st.altair_chart(charts.sector_strip_chart(df, benchmark.percentiles(df),
-                                              {sym: name for name, sym in members}, benchmark.METRIC_TH),
-                    width="stretch")
-    rows = tb[tb["symbol"].isin([sym for _, sym in members])]
-    if not rows.empty:
-        cell = rows.assign(ค่า=rows.apply(lambda r: f"{r['value']:,.2f}  (อันดับ {r['rank']}/{r['n']})", axis=1))
-        pivot = cell.pivot(index="company", columns="metric", values="ค่า")
-        median = rows.drop_duplicates("metric").set_index("metric")["median"].map(lambda x: f"{x:,.2f}")
-        pivot.loc["มัธยฐานของหมวด"] = median
-        cols = [m for m in benchmark.METRICS if m in pivot.columns]
-        st.dataframe(pivot[cols].rename(columns=benchmark.METRIC_TH), width="stretch")
-    as_of = df["as_of"].dropna().max() if "as_of" in df else ""
-    st.caption(f"ราคาหุ้น ณ {as_of} · อันดับ 1 = ดีที่สุด (D/E ต่ำสุด, P/E ต่ำสุด = ราคาถูกเมื่อเทียบกำไร) · "
-               "บริษัทที่ไม่มีตัวเลข (เช่น ขาดทุนจึงไม่มี P/E) ไม่ถูกนับ")
-
-
-def section_price(v):
-    companies = benchmark.symbols_of(v["companies"])
-    px = impact.prices(set(companies.values()))
-    missing = sorted(set(companies.values()) - set(px))
-    if missing and st.button(f"ดึงราคาหุ้น 6 เดือนของ {', '.join(missing)} จาก SET", icon=":material/download:",
-                             key="px_fetch", help="ไม่ใช้ LLM · 1 call ต่อหุ้น"):
-        with friendly_errors(), st.spinner("กำลังดึงราคาหุ้น..."):
-            impact.refresh(missing, log=st.caption)
-        st.rerun()
-    ev = impact.events(v["df"], companies)
-    if not px or ev.empty:
-        st.caption("ยังไม่มีราคาหุ้นหรือข่าวในช่วงที่มีราคา")
-        return
-    st.caption("วันที่มีข่าวหรือประกาศ SET แล้วหุ้นขยับเท่าไรใน 1 และ 3 วันทำการ เทียบราคาปิดก่อนข่าว "
-               "และหักผลของตลาดรวม (ดัชนี SET หรือ mai ช่วงเดียวกัน) · "
-               f"“ผิดปกติ” = ส่วนที่หักตลาดแล้วเกิน {impact.Z_LIMIT:.0f} เท่าของความผันผวนปกติของหุ้นตัวนั้น · "
-               "ข่าวหลัง 16:30 นับเป็นวันทำการถัดไป · ยังไม่หักวันขึ้นเครื่องหมาย XD · ไม่ผ่าน LLM")
-    big = ev[ev["big"]]
-    lines = []
-    for _, r in big.head(3).iterrows():
-        link = f"[{r['titles'][0][:80]}]({r['urls'][0]})" if r["urls"] and r["urls"][0] else r["titles"][0][:80]
-        lines.append(f"**{r['company']}** {r['date']}: {impact.describe(r)} หลัง {link}")
-    insights.show(st, lines or ["ไม่มีวันไหนที่หุ้นขยับผิดปกติหลังข่าวในช่วงนี้"])
-    names = [n for n in v["companies"] if n in companies and companies[n] in px]
-    pick = st.segmented_control("บริษัท", names, key="px_pick", default=names[0],
-                                label_visibility="collapsed") or names[0]
-    st.altair_chart(charts.price_news_chart(px[companies[pick]], ev[ev["company"] == pick]), width="stretch")
-    st.markdown("##### วันที่หุ้นขยับมากที่สุดหลังข่าว")
-    table = ev.head(15).assign(หัวข้อ=ev["titles"].map(lambda t: " / ".join(t[:2])),
-                               ลิงก์=ev["urls"].map(lambda u: u[0] if u else None),
-                               น้ำเสียง=ev["sentiment"].map(SENTIMENT_TH))
-    st.dataframe(
-        table, hide_index=True, width="stretch",
-        column_order=["company", "date", "r1_pct", "r3_pct", "market_r3_pct", "ar3_pct", "z", "big", "news",
-                      "น้ำเสียง", "หัวข้อ", "ลิงก์"],
-        column_config={
-            "company": st.column_config.TextColumn("บริษัท"),
-            "date": st.column_config.TextColumn("วันทำการ"),
-            "r1_pct": st.column_config.NumberColumn("1 วัน (%)", format="%+.2f"),
-            "r3_pct": st.column_config.NumberColumn("3 วัน (%)", format="%+.2f"),
-            "market_r3_pct": st.column_config.NumberColumn("ตลาด 3 วัน (%)", format="%+.2f",
-                                                           help="ดัชนี SET (หรือ mai) ช่วงเดียวกัน"),
-            "ar3_pct": st.column_config.NumberColumn("หักตลาดแล้ว (%)", format="%+.2f",
-                                                     help="3 วันของหุ้น − 3 วันของตลาด"),
-            "z": st.column_config.NumberColumn("เท่าของปกติ", format="%+.1f",
-                                               help="ผลตอบแทน ÷ ความผันผวนรายวันปกติของหุ้น (ติดลบ = ลง)"),
-            "big": st.column_config.CheckboxColumn("ผิดปกติ"),
-            "news": st.column_config.NumberColumn("ข่าว"),
-            "หัวข้อ": st.column_config.TextColumn(width="large"),
-            "ลิงก์": st.column_config.LinkColumn(display_text="เปิด"),
-        })
-
-
 def tab_deep(res, v):
     sections = {}
     if not v["a"].empty:
-        sections["หมวดข่าว"] = lambda: section_categories(v)
+        sections["หมวดข่าว"] = lambda: news.section_categories(v)
     if not v["df"].empty and charts.week_start(analyze.news_only(v["df"])["published_dt"].dropna()).nunique() >= 2:
-        sections["แนวโน้ม"] = lambda: section_trends(v)
+        sections["แนวโน้ม"] = lambda: news.section_trends(v)
     if not v["reviews"].empty:
-        sections["รีวิวแอป"] = lambda: section_reviews(v)
+        sections["รีวิวแอป"] = lambda: news.section_reviews(v)
     if not v["fin"].empty:
-        sections["งบการเงิน"] = lambda: section_finance(res, v)
+        sections["งบการเงิน"] = lambda: finance.section_finance(res, v)
     if benchmark.symbols_of(v["companies"]):
-        sections["เทียบทั้งหมวด"] = lambda: section_sector(v)
-        sections["ราคาหุ้นหลังข่าว"] = lambda: section_price(v)
+        sections["เทียบทั้งหมวด"] = lambda: market.section_sector(v)
+        sections["ราคาหุ้นหลังข่าว"] = lambda: market.section_price(v)
     if not v["internal"].empty:
-        sections["ข้อมูลภายใน"] = lambda: section_internal(v)
+        sections["ข้อมูลภายใน"] = lambda: news.section_internal(v)
     if not sections:
         st.caption("ไม่มีข้อมูลตามตัวกรองนี้")
         return
@@ -600,53 +339,6 @@ def tab_data(v):
            .to_csv(index=False).encode("utf-8-sig"))  # BOM ให้ Excel อ่านไทยได้
     st.download_button("ดาวน์โหลดข้อมูลที่กรองแล้ว (.csv)", csv, "data.csv", "text/csv",
                        icon=":material/table:", on_click="ignore")
-
-
-def _examples(res):
-    first = res["self_name"] or res["companies"][0]
-    out = [f"{first} เปิดตัวสินค้าหรือแคมเปญอะไรบ้าง", "ใครมีโปรโมชันหรือสินค้าใหม่ใน 30 วันล่าสุด"]
-    if benchmark.symbols_of(res["companies"]):
-        out += ["หุ้นตัวไหนขยับแรงหลังข่าว เป็นข่าวอะไร", f"อัตรากำไรของ {first} อยู่อันดับไหนในหมวด"]
-    return out
-
-
-def _ask_later(question):
-    st.session_state.ask_pending = question
-
-
-def tab_ask(res):
-    st.caption("ตอบจากข้อมูลที่ระบบเก็บไว้ของบริษัทในผลนี้เท่านั้น (ข่าว ประกาศ SET รีวิว งบ อันดับในหมวด ราคาหุ้น) "
-               "ไม่ใช้ความรู้ของ LLM · ทุกข้อมีลิงก์ที่มา · ไม่มีข้อมูลจะตอบว่าไม่มี · ใช้ LLM 2 ครั้งต่อคำถาม")
-    key = f"ask_history_{res.get('report_id')}"
-    history = st.session_state.setdefault(key, [])
-    cols = st.columns(len(_examples(res)))
-    for i, (col, q) in enumerate(zip(cols, _examples(res))):
-        col.button(q, key=f"ask_ex_{i}", on_click=_ask_later, args=(q,), width="stretch")
-    question = st.chat_input("ถามเกี่ยวกับคู่แข่ง เช่น “AP เปิดโครงการใหม่อะไรบ้าง”", key="ask_input")
-    question = question or st.session_state.pop("ask_pending", None)
-    if question:
-        companies = benchmark.symbols_of(res["companies"])
-        with friendly_errors(), st.spinner("กำลังค้นข้อมูลที่เก็บไว้และเขียนคำตอบ..."):
-            out = ask.answer(question, res["df"], res["companies"], fin=res["fin"],
-                             sector=benchmark.table(companies) if companies else None,
-                             price=impact.events(res["df"], companies) if companies else None)
-            history.insert(0, {"q": question, **out})
-    for h in history:
-        with st.chat_message("user"):
-            st.markdown(h["q"])
-        with st.chat_message("assistant"):
-            st.markdown(h["answer"])
-            f = h["filters"]
-            scope = [", ".join(f["companies"]) or "ทุกบริษัท"]
-            if f.get("sentiments"):
-                scope.append("ข่าว" + "/".join(SENTIMENT_TH[x] for x in f["sentiments"]))
-            if f["keywords"]:
-                scope.append("คำค้น " + ", ".join(f["keywords"]))
-            if f["days"]:
-                scope.append(f"{f['days']} วันล่าสุด")
-            st.caption(f"ใช้ {h['used']} รายการ · ค้นจาก: {' · '.join(scope)}"
-                       + (" · รวมตัวเลขงบ/อันดับ/ราคาหุ้น" if f["needs_numbers"] else "")
-                       + f" · LLM {h['llm_calls']} ครั้ง")
 
 
 # ---------- ประกอบหน้า ----------
@@ -686,7 +378,7 @@ def show(res, on_report):
     names = ["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["เจาะลึก", "ถามข้อมูล", "ข้อมูลทั้งหมด"]
     renders = ([lambda: tab_summary(res, v, f, active, scope, on_report)]
                + ([lambda: tab_gap(v)] if has_gap else [])
-               + [lambda: tab_deep(res, v), lambda: tab_ask(res), lambda: tab_data(v)])
+               + [lambda: tab_deep(res, v), lambda: ask_tab.tab_ask(res), lambda: tab_data(v)])
     for tab, render in zip(st.tabs(names), renders):
         with tab:
             render()
