@@ -27,7 +27,7 @@ with no news about it. Company website pages and app reviews are always relevant
 
 Return ONLY a JSON array, one object per item:
 [{{"id": <id>, "relevant": true, "category": "...", "sentiment": "...", "summary": "<สรุปภาษาไทย 1 ประโยค>"}}]
-
+{examples}
 Company: {company}
 Items:
 {lines}"""
@@ -76,10 +76,28 @@ def describe(row):
     return " · ".join(parts)
 
 
-def _classify_batch(company, docs):
+EXAMPLES = """
+Items the user already checked by hand. Follow the same judgement for similar items:
+{rows}
+"""
+
+
+def examples_text(company):
+    """ข่าวที่ผู้ใช้ตรวจแล้ว (เน้นที่ระบบเคยตัดสินผิด) ของบริษัทนี้ก่อน → ตัวอย่างให้ LLM
+    ระบบจึงแม่นขึ้นตามที่องค์กรตรวจ"""
+    rows = []
+    for e in db.label_examples(company):
+        verdict = ("relevant false" if not e["relevant"] else "relevant true"
+                   + (f", category {e['category']}" if e["category"] else "")
+                   + (f", sentiment {e['sentiment']}" if e["sentiment"] else ""))
+        rows.append(f'- {e["company"]}: "{e["title"][:120]}" → {verdict}')
+    return EXAMPLES.format(rows="\n".join(rows)) if rows else ""
+
+
+def _classify_batch(company, docs, examples=""):
     sent_ids = {d["id"] for d in docs}
     lines = "\n".join(_line(d) for d in docs)
-    prompt = PROMPT.format(company=company, lines=lines)
+    prompt = PROMPT.format(company=company, lines=lines, examples=examples)
     for _ in range(2):  # ลอง 1 ครั้ง + ลองใหม่ 1 ครั้ง
         try:
             checked = _validate(llm.chat_json(prompt), sent_ids)
@@ -104,11 +122,12 @@ def classify_pending(company_ids, on_progress=None):
             for i in range(0, len(docs_), size):
                 batches.append((company_id, company, docs_[i:i + size]))
     profiles = {r["name"]: describe(r) for r in db.get_companies(list({d["company"] for d in docs}))}
+    examples = {name: examples_text(name) for name in profiles} if batches else {}
 
     for n, (company_id, company, batch) in enumerate(batches, 1):
         if on_progress:
             on_progress(f"Classify {company} ({n}/{len(batches)})")
-        result = _classify_batch(profiles.get(company, company), batch)
+        result = _classify_batch(profiles.get(company, company), batch, examples.get(company, ""))
         if result is None:
             skipped += 1
             continue

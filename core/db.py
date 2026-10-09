@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -109,6 +110,14 @@ CREATE TABLE IF NOT EXISTS jobs (
   error TEXT,
   started_at TEXT,
   finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS labels (
+  fact_id INTEGER PRIMARY KEY REFERENCES facts(id),  -- ผู้ใช้ตรวจผลของระบบ (ใช้วัดความแม่น + ตัวอย่างให้ LLM)
+  relevant INTEGER,      -- 1 = ข่าวนี้เป็นเรื่องของบริษัทนี้จริง
+  category TEXT,         -- หมวดที่ถูก (NULL ถ้าไม่เกี่ยว)
+  sentiment TEXT,
+  labeled_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS market_cache (
@@ -589,3 +598,66 @@ def get_job(job_id):
     job = dict(row)
     job["config"] = json.loads(job.pop("config_json") or "{}")
     return job
+
+
+# ---------- labels (ตรวจความแม่น) ----------
+
+_LABEL_COLS = """f.id AS fact_id, c.name AS company, c.business, d.title, d.url, f.summary,
+                 f.category, f.sentiment, COALESCE(d.source_type, 'news') AS source_type"""
+_LABEL_FROM = """FROM facts f JOIN documents d ON d.id = f.document_id JOIN companies c ON c.id = f.company_id"""
+
+
+def label_queue(limit=20, company_ids=None):
+    """ข่าวที่ยังไม่ได้ตรวจ (เฉพาะข่าวที่ค้นด้วยชื่อ ซึ่งอาจปนเรื่องอื่น) สุ่มลำดับ
+    ข่าวที่ระบบตัดออกมีน้อย จึงดึงมาราว 1/3 ของคิว เพื่อให้วัดความแม่นของทั้งสองฝั่งได้
+    คืน [{fact_id, company, business, title, url, summary, category, sentiment}]"""
+    where = f"AND f.company_id IN ({_in(company_ids)})" if company_ids else ""
+    query = f"""SELECT {_LABEL_COLS} {_LABEL_FROM}
+                WHERE COALESCE(d.source_type, 'news') IN ('news', 'rss') {where}
+                  AND f.id NOT IN (SELECT fact_id FROM labels) AND (f.category = 'irrelevant') = ?
+                ORDER BY random() LIMIT ?"""
+    with connect() as conn:
+        dropped = conn.execute(query, [*(company_ids or []), 1, max(limit // 3, 1)]).fetchall()
+        kept = conn.execute(query, [*(company_ids or []), 0, limit - len(dropped)]).fetchall()
+    rows = [dict(r) for r in dropped + kept]
+    random.shuffle(rows)
+    return rows
+
+
+def save_label(fact_id, relevant, category=None, sentiment=None):
+    with connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO labels (fact_id, relevant, category, sentiment, labeled_at) "
+                     "VALUES (?, ?, ?, ?, ?)", (fact_id, int(relevant), category, sentiment, now()))
+
+
+def labels_df():
+    """ผลของระบบเทียบกับที่ผู้ใช้ตรวจ หนึ่งแถวต่อข่าวที่ตรวจแล้ว"""
+    with connect() as conn:
+        return pd.read_sql_query(
+            f"""SELECT {_LABEL_COLS}, l.relevant AS human_relevant, l.category AS human_category,
+                       l.sentiment AS human_sentiment, l.labeled_at
+                {_LABEL_FROM} JOIN labels l ON l.fact_id = f.id ORDER BY l.labeled_at""", conn)
+
+
+def label_population():
+    """จำนวนข่าวที่ค้นด้วยชื่อทั้งหมด แยกที่ระบบเก็บไว้/ตัดออก (ใช้ประมาณ recall จากตัวอย่าง)"""
+    with connect() as conn:
+        row = conn.execute(
+            f"""SELECT SUM(f.category != 'irrelevant') AS kept, SUM(f.category = 'irrelevant') AS dropped
+                {_LABEL_FROM} WHERE COALESCE(d.source_type, 'news') IN ('news', 'rss')""").fetchone()
+    return {"kept": row["kept"] or 0, "dropped": row["dropped"] or 0}
+
+
+def label_examples(company=None, limit=6):
+    """ตัวอย่างที่ผู้ใช้ตรวจแล้วและระบบเคยตัดสินผิด (หรือไม่เกี่ยว) ของบริษัทนี้ก่อน ใช้สอน LLM รอบถัดไป"""
+    with connect() as conn:
+        rows = conn.execute(
+            f"""SELECT c.name AS company, d.title, l.relevant, l.category, l.sentiment,
+                       (f.category = 'irrelevant') != (l.relevant = 0) AS wrong_relevance,
+                       (l.category IS NOT NULL AND l.category != f.category) AS wrong_category
+                {_LABEL_FROM} JOIN labels l ON l.fact_id = f.id
+                WHERE (f.category = 'irrelevant') != (l.relevant = 0) OR l.relevant = 0
+                   OR (l.category IS NOT NULL AND l.category != f.category)
+                   OR (l.sentiment IS NOT NULL AND l.sentiment != f.sentiment)
+                ORDER BY (c.name = ?) DESC, l.labeled_at DESC LIMIT ?""", (company or "", limit)).fetchall()
+    return [dict(r) for r in rows]

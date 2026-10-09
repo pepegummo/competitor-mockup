@@ -3,7 +3,7 @@
 log(text, kind): kind = "step" หัวข้อขั้น, "line" ผลย่อย, "note" หมายเหตุเล็ก, "status" ข้อความสถานะ"""
 import pandas as pd
 
-from core import analyze, benchmark, collect, db, impact, llm, monitor, process, profile
+from core import analyze, benchmark, collect, db, impact, monitor, process, profile
 from core.sources import SourceSkipped, set_api
 from ui.labels import CATEGORY_TH, FINANCIALS_KEY  # ไฟล์ข้อความล้วน ไม่มี streamlit
 
@@ -84,7 +84,7 @@ def run(companies, self_name=None, mode="compare", opts=None, focus=None, groups
     opts = {**DEFAULT_OPTS, **(opts or {})}
     groups = groups or {}
     focus_text = analyze.focus_label(focus, CATEGORY_TH)
-    calls_before = llm.call_count
+    started = db.now()
     ids = db.company_ids(companies)
     config = dict(companies=companies, self_name=self_name, mode=mode, opts=opts, focus=focus or {}, groups=groups)
 
@@ -157,8 +157,9 @@ def run(companies, self_name=None, mode="compare", opts=None, focus=None, groups
                          changes=changes, internal=internal, sector=sector, price=events)
     report = db.latest_report(report_mode)
     # เวลาของรอบ = เวลาจบ ข่าวที่ดึงในรอบนี้จึงไม่ถูกนับเป็น "ใหม่" ในรอบถัดไป
+    config["llm"] = db.llm_stats(since=started)  # ต้นทุนของรอบนี้ (นับจาก llm_log: ครั้งที่เรียกจริงและเวลารวม)
     run_id = db.save_run(db.now(), config, snapshot, changes, report["id"], watch_id)
-    log(f"วิเคราะห์เสร็จ · เรียก LLM {llm.call_count - calls_before} ครั้ง", "status")
+    log(f"วิเคราะห์เสร็จ · เรียก LLM {config['llm']['calls']} ครั้ง ({config['llm']['seconds']:.0f} วินาที)", "status")
     return {"report": report, "empty": empty, "changes": changes, "self_name": self_name, "run_id": run_id,
             "error": None}
 

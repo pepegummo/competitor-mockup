@@ -660,6 +660,9 @@ def show(res, on_report):
     if res["fin_raw"]:
         fresh.append(f"งบ SET {len(res['fin_raw'])} บริษัท "
                      f"(ดึง {ago(max(f['fetched_at'] for f in res['fin_raw'].values()))})")
+    cost = res.get("llm")
+    if cost:
+        fresh.append(f"รอบนี้ใช้ LLM {cost['calls']} ครั้ง ({cost['seconds']:.0f} วินาที)")
     head.caption(f"{' · '.join(res['companies'])} · " + " · ".join(fresh))
     if res.get("focus_label"):
         head.caption(f"วิเคราะห์เฉพาะเรื่อง: **{res['focus_label']}**")

@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from core import analyze, collect, db, discover, llm, pipeline
-from ui import company_panel, company_picker, group_panel, internal_panel, results, watch_panel
+from ui import accuracy_panel, company_panel, company_picker, group_panel, internal_panel, results, watch_panel
 from ui.common import friendly_errors
 from ui.company_panel import ALL_SOURCES
 from ui.labels import CATEGORY_TH, FINANCIALS_KEY, MODES, SENTIMENT_TH
@@ -53,6 +53,7 @@ def build_result(companies, report_row, self_name=None, mode="compare", focus=No
         report_scope=report_scope, fetched_at=db.last_fetched_at(ids), groups=groups or {},
         run_id=run_id, run_at=run["started_at"] if run else None, changes=run["changes"] if run else None,
         opts=opts or (run["config"].get("opts") if run else None),
+        llm=run["config"].get("llm") if run else None,
     )
 
 
@@ -432,9 +433,11 @@ else:
 upcoming = list(dict.fromkeys(upcoming))
 
 # แท็บตั้งค่าแยกจากผล หน้าผลจึงไม่ถูกดันลงล่าง (ทุกแท็บรันทุกรอบ ค่าที่เลือกไว้ไม่หาย)
-tab_res, tab_comp, tab_watch, tab_int = st.tabs(
+tab_res, tab_comp, tab_watch, tab_int, tab_acc = st.tabs(
     [":material/insights: ผลวิเคราะห์", ":material/tune: บริษัทและแหล่งข้อมูล",
-     ":material/schedule: ติดตามอัตโนมัติ", ":material/upload_file: ข้อมูลภายใน"])
+     ":material/schedule: ติดตามอัตโนมัติ", ":material/upload_file: ข้อมูลภายใน", ":material/fact_check: ตรวจความแม่น"])
+with tab_acc:
+    accuracy_panel.render()
 with tab_comp:
     members = {}
     if not upcoming:
