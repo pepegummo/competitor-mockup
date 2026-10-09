@@ -661,3 +661,79 @@ def label_examples(company=None, limit=6):
                    OR (l.sentiment IS NOT NULL AND l.sentiment != f.sentiment)
                 ORDER BY (c.name = ?) DESC, l.labeled_at DESC LIMIT ?""", (company or "", limit)).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------- ดูแลข้อมูล ----------
+
+def duplicate_groups():
+    """บริษัทที่ชื่อหุ้นเดียวกันแต่เป็นคนละแถว (เช่น True / True Corporation / ทรู)
+    คืน [[{name, set_symbol, docs}, ...], ...] เรียงแถวที่มีข้อมูลมากสุดก่อน"""
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT c.name, c.set_symbol, COUNT(d.id) AS docs FROM companies c
+               LEFT JOIN documents d ON d.company_id = c.id
+               WHERE c.set_symbol IS NOT NULL AND c.set_symbol != ''
+               GROUP BY c.id ORDER BY c.set_symbol, docs DESC""").fetchall()
+    groups = {}
+    for r in rows:
+        groups.setdefault(r["set_symbol"], []).append(dict(r))
+    return [g for g in groups.values() if len(g) > 1]
+
+
+def merge_companies(keep, others):
+    """ย้ายข้อมูลของ others มาไว้ที่ keep แล้วลบแถว others · ข่าวที่ซ้ำกับของ keep (url หรือหัวข้อเดียวกัน) ถูกทิ้ง
+    ชื่อของ others ถูกเพิ่มเป็นชื่อเรียกของ keep · คืนจำนวนรายการที่ย้าย"""
+    others = [o for o in others if o != keep]
+    if not others:
+        return 0
+    keep_row = get_companies([keep])[0]
+    moved = 0
+    with connect() as conn:
+        keep_id = conn.execute("SELECT id FROM companies WHERE name = ?", (keep,)).fetchone()["id"]
+        for name in others:
+            row = conn.execute("SELECT id FROM companies WHERE name = ?", (name,)).fetchone()
+            if not row:
+                continue
+            oid = row["id"]
+            dup = [r["id"] for r in conn.execute(
+                """SELECT d.id FROM documents d WHERE d.company_id = ? AND EXISTS (
+                     SELECT 1 FROM documents k WHERE k.company_id = ? AND (k.url = d.url OR k.title = d.title))""",
+                (oid, keep_id))]
+            if dup:
+                conn.execute(f"DELETE FROM labels WHERE fact_id IN (SELECT id FROM facts WHERE document_id IN ({_in(dup)}))",
+                             dup)
+                conn.execute(f"DELETE FROM facts WHERE document_id IN ({_in(dup)})", dup)
+                conn.execute(f"DELETE FROM documents WHERE id IN ({_in(dup)})", dup)
+            moved += conn.execute("UPDATE documents SET company_id = ? WHERE company_id = ?", (keep_id, oid)).rowcount
+            conn.execute("UPDATE facts SET company_id = ? WHERE company_id = ?", (keep_id, oid))
+            if conn.execute("SELECT 1 FROM financials WHERE company_id = ?", (keep_id,)).fetchone():
+                conn.execute("DELETE FROM financials WHERE company_id = ?", (oid,))
+            else:
+                conn.execute("UPDATE financials SET company_id = ? WHERE company_id = ?", (keep_id, oid))
+            conn.execute("UPDATE OR IGNORE internal_metrics SET company = ? WHERE company = ?", (keep, name))
+            conn.execute("DELETE FROM internal_metrics WHERE company = ?", (name,))
+            conn.execute("DELETE FROM companies WHERE id = ?", (oid,))
+        aliases = keep_row["aliases"] + [o for o in others if o not in keep_row["aliases"]]
+        conn.execute("UPDATE companies SET aliases = ? WHERE id = ?", (json.dumps(aliases, ensure_ascii=False), keep_id))
+    return moved
+
+
+def checked_relevance_count(company_ids):
+    """(ข่าวที่ค้นด้วยชื่อทั้งหมด, ที่ผู้ใช้ตรวจแล้ว) ของบริษัทเหล่านี้"""
+    with connect() as conn:
+        row = conn.execute(
+            f"""SELECT COUNT(*) AS n, COUNT(l.fact_id) AS labeled FROM facts f
+                JOIN documents d ON d.id = f.document_id LEFT JOIN labels l ON l.fact_id = f.id
+                WHERE f.company_id IN ({_in(company_ids)}) AND COALESCE(d.source_type, 'news') IN ('news', 'rss')""",
+            company_ids).fetchone()
+    return row["n"], row["labeled"]
+
+
+def reset_news_facts(company_ids):
+    """ลบผลจัดหมวดของข่าวที่ค้นด้วยชื่อ (ยกเว้นข่าวที่ผู้ใช้ตรวจแล้ว) เพื่อให้ LLM จัดหมวดและตรวจความเกี่ยวข้องใหม่"""
+    with connect() as conn:
+        return conn.execute(
+            f"""DELETE FROM facts WHERE company_id IN ({_in(company_ids)})
+                AND id NOT IN (SELECT fact_id FROM labels)
+                AND document_id IN (SELECT id FROM documents WHERE COALESCE(source_type, 'news') IN ('news', 'rss'))""",
+            company_ids).rowcount

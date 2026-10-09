@@ -6,7 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from core import analyze, collect, db, discover, llm, pipeline
-from ui import accuracy_panel, company_panel, company_picker, group_panel, internal_panel, results, watch_panel
+from ui import (accuracy_panel, company_panel, company_picker, group_panel, internal_panel, maintenance_panel,
+                results, watch_panel)
 from ui.common import friendly_errors
 from ui.company_panel import ALL_SOURCES
 from ui.labels import CATEGORY_TH, FINANCIALS_KEY, MODES, SENTIMENT_TH
@@ -447,6 +448,7 @@ with tab_comp:
         group_panel.register(upcoming)
         members = group_panel.picked(upcoming)
     company_panel.render(upcoming + list(members), panel_self, picked, adv, members)
+    maintenance_panel.render(upcoming)
 with tab_int:
     internal_panel.render(panel_self or (res or {}).get("self_name"))
 with tab_watch:
