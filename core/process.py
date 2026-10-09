@@ -4,6 +4,8 @@ from itertools import groupby
 from core import db, llm
 
 CATEGORIES = {"product_price", "promotion", "news_pr", "review", "financial", "hr", "other"}
+IRRELEVANT = "irrelevant"  # เก็บไว้เป็น fact เพื่อไม่ส่งให้ LLM ซ้ำ แต่ไม่นำไปวิเคราะห์ (db.facts_df ตัดออก)
+CHECKED_SOURCES = {"news", "rss"}  # แหล่งที่ค้นด้วยชื่อ จึงอาจได้เรื่องอื่นที่ชื่อซ้ำ
 SENTIMENTS = {"positive", "neutral", "negative"}
 BATCH_SIZE = 10          # หัวข้ออย่างเดียว
 BATCH_SIZE_CONTENT = 5   # มีเนื้อหา/รีวิว prompt ยาวขึ้น จึงส่งทีละน้อยลง
@@ -18,8 +20,13 @@ Use category "review" for every [app review] item.
 Sentiment (toward the company): positive, neutral, negative
 For app reviews, sentiment is how the reviewer feels about the company or its app.
 
+"relevant" (news items only): true if the item is really about this company — its business, products,
+people, results or stock. false if the name means something else (a street, a TV host, a news agency,
+another company with the same abbreviation) or the company is only one name in a list of many stocks
+with no news about it. Company website pages and app reviews are always relevant.
+
 Return ONLY a JSON array, one object per item:
-[{{"id": <id>, "category": "...", "sentiment": "...", "summary": "<สรุปภาษาไทย 1 ประโยค>"}}]
+[{{"id": <id>, "relevant": true, "category": "...", "sentiment": "...", "summary": "<สรุปภาษาไทย 1 ประโยค>"}}]
 
 Company: {company}
 Items:
@@ -57,6 +64,18 @@ def _line(d):
     return line
 
 
+def describe(row):
+    """บอก LLM ว่าบริษัทนี้คือใคร เพื่อแยกจากสิ่งอื่นที่ชื่อเหมือนกัน"""
+    parts = [row["name"]]
+    if row.get("aliases"):
+        parts.append("also called " + ", ".join(row["aliases"]))
+    if row.get("set_symbol"):
+        parts.append(f"SET symbol {row['set_symbol']}")
+    if row.get("business"):
+        parts.append(f"business: {row['business']}")
+    return " · ".join(parts)
+
+
 def _classify_batch(company, docs):
     sent_ids = {d["id"] for d in docs}
     lines = "\n".join(_line(d) for d in docs)
@@ -72,9 +91,10 @@ def _classify_batch(company, docs):
 
 
 def classify_pending(company_ids, on_progress=None):
-    """classify เฉพาะ documents ที่ยังไม่มี fact. คืน (จำนวนที่บันทึก, จำนวน batch ที่ข้าม)"""
+    """classify เฉพาะ documents ที่ยังไม่มี fact
+    คืน (จำนวนที่บันทึก, จำนวน batch ที่ข้าม, จำนวนข่าวที่ไม่ใช่เรื่องของบริษัทนั้น)"""
     docs = db.unprocessed_documents(company_ids)
-    saved, skipped = 0, 0
+    saved, skipped, dropped = 0, 0, 0
     batches = []
     for (company_id, company), group in groupby(docs, key=lambda d: (d["company_id"], d["company"])):
         group = list(group)
@@ -83,16 +103,22 @@ def classify_pending(company_ids, on_progress=None):
         for docs_, size in ((short, BATCH_SIZE), (long_, BATCH_SIZE_CONTENT)):
             for i in range(0, len(docs_), size):
                 batches.append((company_id, company, docs_[i:i + size]))
+    profiles = {r["name"]: describe(r) for r in db.get_companies(list({d["company"] for d in docs}))}
 
     for n, (company_id, company, batch) in enumerate(batches, 1):
         if on_progress:
             on_progress(f"Classify {company} ({n}/{len(batches)})")
-        result = _classify_batch(company, batch)
+        result = _classify_batch(profiles.get(company, company), batch)
         if result is None:
             skipped += 1
             continue
+        types = {d["id"]: d["source_type"] or "news" for d in batch}
         for doc_id, item in result.items():
-            db.insert_fact(doc_id, company_id, item["category"], item["sentiment"],
-                           str(item.get("summary", "")).strip())
-            saved += 1
-    return saved, skipped
+            category = item["category"]
+            if item.get("relevant") is False and types[doc_id] in CHECKED_SOURCES:
+                category = IRRELEVANT
+                dropped += 1
+            else:
+                saved += 1
+            db.insert_fact(doc_id, company_id, category, item["sentiment"], str(item.get("summary", "")).strip())
+    return saved, skipped, dropped

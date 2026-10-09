@@ -94,10 +94,11 @@ def collect_company(company_id, company, limit=20, sources=("google_news",), ful
             if new:
                 notes.append(f"{label}: ได้เนื้อหาเต็ม {got}/{len(new)} รายการ")
 
+        raw_ref = str(raw_path.relative_to(db.ROOT) if raw_path.is_relative_to(db.ROOT) else raw_path)
         added = 0
         for it in new:
             if db.insert_document(company_id, it["source_type"], it["url"], it["title"], it["published"],
-                                  _hash(company_id, it), str(raw_path.relative_to(db.ROOT)),
+                                  _hash(company_id, it), raw_ref,
                                   it["source_name"], it["content"], it["rating"]):
                 added += 1
         stats[label] = (len(items), added)

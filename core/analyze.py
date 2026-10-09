@@ -60,8 +60,63 @@ FINANCE_SECTION = """
 period = ช่วงสะสมของงบ (เช่น 6M/2026 = ครึ่งปีแรก), *_yoy_pct = เติบโตเทียบช่วงเดียวกันปีก่อน (%),
 margin = % ของรายได้รวม, roe_pct/de_ratio มาจากงบทั้งปีล่าสุด (ปี fy).
 ถ้า period ต่างกัน ห้ามเทียบตัวเลขเงินตรง ๆ ให้เทียบ % แทน
+sector = หมวดธุรกิจใน SET บริษัทต่างหมวดกันใช้แบบงบต่างกัน อย่าเทียบอัตรากำไรข้ามหมวดตรง ๆ
+ธนาคาร: revenue = รายได้จากการดำเนินงาน (ดอกเบี้ยสุทธิ + ค่าธรรมเนียมสุทธิ + อื่น ๆ), nii = รายได้ดอกเบี้ยสุทธิ,
+nim_approx_pct = nii ต่อปี ÷ สินทรัพย์รวม (ค่าประมาณของ NIM), cost_to_income_pct = ค่าใช้จ่ายดำเนินงาน ÷ revenue,
+credit_cost_pct = ผลขาดทุนด้านเครดิตต่อปี ÷ สินเชื่อ, ldr_pct = สินเชื่อ ÷ เงินฝาก ไม่มีข้อมูล NPL
 บริษัทที่ไม่อยู่ในตารางนี้ไม่ได้จดทะเบียนในตลาดหลักทรัพย์ฯ จึงไม่มีงบ ห้ามเดาตัวเลขให้]
 {f}"""
+
+
+INTERNAL_SECTION = """
+
+[Table I: ข้อมูลภายในที่ผู้ใช้อัปโหลดเอง (ไม่ได้มาจากแหล่งสาธารณะ) — company × metric, หน่วยและช่วงเวลาอยู่ในตาราง U
+ใช้ตัวเลขตามที่ให้มาเท่านั้น และบอกว่าเป็น "ข้อมูลภายใน" เมื่ออ้างถึง]
+{i}
+
+[Table U: หน่วยและช่วงเวลาของแต่ละ metric]
+{u}"""
+
+
+SECTOR_SECTION = """
+
+[Table S: อันดับเมื่อเทียบกับทุกบริษัทจดทะเบียนในหมวดธุรกิจเดียวกันของ SET (ไม่ใช่แค่คู่แข่งที่เลือก)
+rank 1 = ดีที่สุดในหมวด (de_ratio และ pe: ต่ำ = อันดับดี), n = จำนวนบริษัทในหมวดที่มีตัวเลขนี้,
+median = ค่ามัธยฐานของหมวด, ตัวเลขจากงบทั้งปีล่าสุด หน่วยตาม metric (_pct = %, _mb = ล้านบาท)
+ใช้ประโยคเช่น "อัตรากำไรสุทธิของ X อยู่อันดับ 4 จาก 34 บริษัทในหมวดพาณิชย์" ห้ามเทียบอันดับข้ามหมวด]
+{s}"""
+
+
+PRICE_SECTION = """
+
+[Table P: ราคาหุ้นหลังข่าว — วันที่มีข่าว/ประกาศแล้วหุ้นขยับผิดปกติ (คิดจากราคาปิด SET ไม่ใช่การเดา)
+r1_pct/r3_pct = % เปลี่ยนของราคาใน 1/3 วันทำการเทียบกับราคาปิดก่อนข่าว, z = กี่เท่าของความผันผวนปกติของหุ้นนั้น
+headlines = ข่าวของวันนั้น ยังไม่ได้หักผลของตลาดรวม จึงใช้คำว่า "หุ้นขยับหลังข่าว" ไม่ใช่ "ข่าวทำให้หุ้นขยับ"]
+{p}"""
+
+
+CHANGES_SECTION = """
+
+[Changes: สิ่งที่เปลี่ยนไปตั้งแต่รอบวิเคราะห์ก่อน (ระบบคิดจากข้อมูล ไม่ใช่การเดา) level high = สำคัญ]
+{ch}
+Start the report with a short section "สิ่งที่เปลี่ยนไปตั้งแต่รอบก่อน" (2–5 bullets, most important first)
+before the rest of the report."""
+
+
+CITE_RULE = """
+
+Citations: rows in Table C, Table F, Table S, Table P and Changes have a "ref" number. Whenever you state a fact taken from one of
+those rows, put its number in square brackets right after the sentence, e.g. "AIS เปิดตัวแพ็กเกจใหม่ [3]".
+Use only ref numbers that appear above. Never cite table names such as [Table F] or [Gap table].
+Do not write a reference list yourself."""
+
+
+GROUP_SECTION = """
+
+[Group structure: บริษัทในเครือที่ถูกเพิ่มแยกเป็นรายบริษัท (company → parent, relation)
+บริษัทในเครืออาจอยู่คนละธุรกิจกับบริษัทแม่ ให้อธิบายเป็นส่วนหนึ่งของเครือนั้น ห้ามนับเป็นคู่แข่งของบริษัทแม่
+หรือของบริษัทในเครือเดียวกัน]
+{g}"""
 
 
 def news_only(df):
@@ -91,6 +146,34 @@ def _pct(new, old):
     return round((new - old) / old * 100, 1)
 
 
+def _ratio(num, den, annualize_months=None):
+    """num ÷ den เป็น % (annualize_months: แปลงงบสะสม n เดือนเป็นต่อปีก่อนหาร)"""
+    if num is None or not den:
+        return None
+    if annualize_months:
+        num = num * 12 / annualize_months
+    return round(num / den * 100, 2)
+
+
+def bank_metrics(cur, prev):
+    """ตัวชี้วัดเฉพาะธนาคาร (คืน {} ถ้างบไม่มีรายได้ดอกเบี้ยสุทธิ)"""
+    if cur.get("nii") is None:
+        return {}
+    months = cur.get("months") or 12
+    return {
+        "nii_mb": round(cur["nii"]),
+        "nii_yoy_pct": _pct(cur["nii"], prev.get("nii")),
+        "fee_income_mb": round(cur["fee_income"]) if cur.get("fee_income") is not None else None,
+        "fee_income_yoy_pct": _pct(cur.get("fee_income"), prev.get("fee_income")),
+        "nim_approx_pct": _ratio(cur["nii"], cur.get("total_assets"), months),
+        "cost_to_income_pct": _ratio(cur.get("opex"), cur.get("revenue")),
+        "credit_cost_pct": _ratio(cur.get("credit_loss"), cur.get("loans"), months),
+        "ldr_pct": _ratio(cur.get("loans"), cur.get("deposits")),
+        "loans_mb": round(cur["loans"]) if cur.get("loans") is not None else None,
+        "deposits_mb": round(cur["deposits"]) if cur.get("deposits") is not None else None,
+    }
+
+
 def financial_table(fins):
     """Table F: ต่อบริษัทที่มีงบ ค่าทั้งหมดคิดจากตัวเลขในงบที่ SET ให้มา"""
     rows = {}
@@ -100,6 +183,8 @@ def financial_table(fins):
         full_years = [h for h in f.get("history", []) if h["period"] == "ทั้งปี"]
         fy = full_years[-1] if full_years else {}
         rows[name] = {
+            "symbol": f.get("symbol"),
+            "sector": (f.get("profile") or {}).get("sector"),
             "period": cur["period"],
             "revenue_mb": round(rev) if rev is not None else None,
             "revenue_yoy_pct": _pct(rev, prev.get("revenue")),
@@ -113,6 +198,7 @@ def financial_table(fins):
             "market_cap_mb": f["market"].get("market_cap"),
             "pe": f["market"].get("pe"),
             "dividend_yield_pct": f["market"].get("dividend_yield"),
+            **bank_metrics(cur, prev),
         }
     return pd.DataFrame.from_dict(rows, orient="index").rename_axis("company")
 
@@ -120,14 +206,27 @@ def financial_table(fins):
 FINANCE_GAP_ITEMS = ("revenue_yoy_pct", "net_margin_pct", "roe_pct")
 
 
-def gap_table(df, table_b, self_name, reviews=None, fin=None):
+def internal_table(names):
+    """Table I: ข้อมูลภายในที่ผู้ใช้อัปโหลด → ตาราง company × metric (หน่วย/ช่วงเวลาต่อ metric อยู่ใน attrs["units"])"""
+    raw = db.internal_metrics(list(names))
+    if raw.empty:
+        return pd.DataFrame()
+    table = raw.pivot_table(index="company", columns="metric", values="value", aggfunc="last")
+    table = table.reindex([n for n in names if n in table.index])
+    table.columns.name = None
+    table.attrs["units"] = (raw.groupby("metric")[["unit", "period"]].last()
+                            .fillna("").to_dict(orient="index"))
+    return table
+
+
+def gap_table(df, table_b, self_name, reviews=None, fin=None, members=(), internal=None):
     """ค่าของเรา − ค่าเฉลี่ยคู่แข่ง: category (% ของข่าวแต่ละบริษัท), sentiment (%), รีวิว (ดาว, % รีวิวลบ),
-    การเงิน (% เติบโต, อัตรากำไร, ROE)"""
+    การเงิน (% เติบโต, อัตรากำไร, ROE) · members = บริษัทในเครือ ไม่นับเป็นคู่แข่ง"""
     df = news_only(df)
     if df.empty or self_name not in set(df["company"]):
         return pd.DataFrame()
     share = pd.crosstab(df["company"], df["category"], normalize="index") * 100
-    competitors = [c for c in share.index if c != self_name]
+    competitors = [c for c in share.index if c != self_name and c not in members]
     if not competitors:
         return pd.DataFrame()
     rows = []
@@ -154,6 +253,15 @@ def gap_table(df, table_b, self_name, reviews=None, fin=None):
                 rows.append({"type": "finance", "item": item, "us_pct": round(float(us), 1),
                              "competitor_avg_pct": round(float(others.mean()), 1),
                              "gap_pts": round(float(us) - float(others.mean()), 1)})
+    # ข้อมูลภายใน: หน่วยตามที่ผู้ใช้ให้มา ใช้เมื่อมีค่าของเราและคู่แข่งอย่างน้อย 1 ราย
+    if internal is not None and not internal.empty and self_name in internal.index:
+        for item in internal.columns:
+            us = internal.loc[self_name, item]
+            others = internal.loc[[c for c in competitors if c in internal.index], item].dropna()
+            if pd.notna(us) and not others.empty:
+                rows.append({"type": "internal", "item": item, "us_pct": round(float(us), 2),
+                             "competitor_avg_pct": round(float(others.mean()), 2),
+                             "gap_pts": round(float(us) - float(others.mean()), 2)})
     return pd.DataFrame(rows)
 
 
@@ -206,18 +314,78 @@ def tables_from_df(df):
     table_c = (news.sort_values("published_dt", ascending=False)
                  .groupby("company").head(5)
                  .sort_values(["company", "published_dt"], ascending=[True, False])
-                 [["company", "published_dt", "category", "sentiment", "summary"]]
+                 [["company", "published_dt", "category", "sentiment", "summary", "title", "url"]]
                  .rename(columns={"published_dt": "date"}))
     table_c["date"] = table_c["date"].dt.strftime("%Y-%m-%d")
     return df, table_a, table_b, table_c
 
 
+SET_FACTSHEET = "https://www.set.or.th/th/market/product/stock/quote/{}/financial-statement/company-highlights"
+# [3] [1, 2] [6-10] และแบบที่ LLM ชอบเขียนเอง เช่น [Table C: ref 11-15] [ref 2]
+REF = re.compile(r"\[(?:[A-Za-z][A-Za-z ]*:\s*)?(?:refs?\.?\s*)?(\d+(?:\s*[,，、\-–]\s*(?:refs?\.?\s*)?\d+)*)\]",
+                 re.I)
+# LLM บางครั้งอ้างชื่อตารางแทนเลข เช่น [Table F] [Gap table, Changes] ซึ่งผู้อ่านเปิดดูไม่ได้ จึงตัดทิ้ง
+TABLE_CITE = re.compile(r"\s*\[(?:(?:Table\s*[A-Z]|Gap table|Changes|Group structure|Scope|Financials|Sector ranks|"
+                        r"Stock moves[^]]*|Items)(?:\s*,\s*)?)+\](?!\()",
+                        re.I)
+
+
+def _changes_rows(changes, add_ref):
+    rows = []
+    for c in changes or []:
+        url = c["items"][0]["url"] if c["items"] else None
+        rows.append({"ref": add_ref(f"{c['company']}: {c['items'][0]['title']}", url) if url else "",
+                     "company": c["company"], "level": c["level"], "change": c["text"],
+                     "examples": " / ".join(it["title"] for it in c["items"][:3])})
+    return pd.DataFrame(rows)
+
+
+def link_refs(report, refs):
+    """[3] → ลิงก์ไปยังแหล่งที่มา แล้วต่อท้ายรายการแหล่งอ้างอิงเฉพาะที่ถูกอ้างจริง"""
+    used = []
+
+    def numbers(text):
+        out = []
+        for part in re.split(r"[,，、]", text):
+            ends = [int(x) for x in re.findall(r"\d+", part)]
+            if len(ends) == 2 and 0 < ends[1] - ends[0] <= 10:  # ช่วง เช่น 6-10
+                out += range(ends[0], ends[1] + 1)
+            else:
+                out += ends
+        return out
+
+    def repl(m):
+        out = []
+        for n in numbers(m.group(1)):
+            if 1 <= n <= len(refs):
+                out.append(f"[[{n}]]({refs[n - 1][1]})")
+                used.append(n)
+        return "".join(out) or m.group(0)
+
+    report = REF.sub(repl, TABLE_CITE.sub("", report))
+    if used:
+        report += "\n\n---\n**แหล่งอ้างอิง**\n\n" + "\n".join(
+            f"{n}. [{re.sub(r'[][]', '', refs[n - 1][0])[:120]}]({refs[n - 1][1]})" for n in sorted(set(used)))
+    return report
+
+
 def write_report(table_a, table_b, table_c, self_name=None, gap=None, mode=None, reviews=None, fin=None,
-                 scope=None):
-    """scope = ข้อความบอกว่าข้อมูลถูกกรองเฉพาะเรื่อง/ช่วงไหน (ให้ LLM เขียนเน้นเรื่องนั้น)"""
-    """ไม่มี self_name = รายงานกลาง ๆ (phase1), มี self_name = มุมมองบริษัทเรา (phase2/phase3)"""
-    tables = dict(a=table_a.to_markdown(), b=table_b.to_markdown(),
-                  c=table_c.to_markdown(index=False))
+                 scope=None, groups=None, changes=None, internal=None, sector=None, price=None):
+    """ไม่มี self_name = รายงานกลาง ๆ (phase1), มี self_name = มุมมองบริษัทเรา (phase2/phase3)
+    scope = ข้อความบอกว่าข้อมูลถูกกรองเฉพาะเรื่อง/ช่วงไหน (ให้ LLM เขียนเน้นเรื่องนั้น)
+    แถวใน Table C / F / Changes มีเลข ref ให้ LLM อ้างอิง แล้วแปลงเป็นลิงก์ไปยังข่าวหรืองบต้นทาง"""
+    refs = []
+
+    def add_ref(title, url):
+        refs.append((title or url, url))
+        return len(refs)
+
+    c = table_c.copy()
+    if "url" in c:
+        c.insert(0, "ref", [add_ref(t, u) if isinstance(u, str) and u else ""
+                            for t, u in zip(c["title"], c["url"])])
+        c = c.drop(columns=["title", "url"])
+    tables = dict(a=table_a.to_markdown(), b=table_b.to_markdown(), c=c.to_markdown(index=False))
     if self_name:
         prompt = REPORT_PROMPT_SELF.format(self_company=self_name,
                                            gap=gap.to_markdown(index=False), **tables)
@@ -231,10 +399,37 @@ def write_report(table_a, table_b, table_c, self_name=None, gap=None, mode=None,
     if reviews is not None and not reviews.empty:
         prompt += REVIEW_SECTION.format(r=reviews.to_markdown())
     if fin is not None and not fin.empty:
-        prompt += FINANCE_SECTION.format(f=fin.to_markdown())
+        f = fin.dropna(axis=1, how="all").copy()
+        if "symbol" in f:
+            f.insert(0, "ref", [add_ref(f"งบการเงิน {name} ({sym}) จาก SET", SET_FACTSHEET.format(sym))
+                                if isinstance(sym, str) and sym else "" for name, sym in zip(f.index, f["symbol"])])
+        prompt += FINANCE_SECTION.format(f=f.to_markdown())
+    if internal is not None and not internal.empty:
+        units = pd.DataFrame.from_dict(internal.attrs.get("units", {}), orient="index")
+        prompt += INTERNAL_SECTION.format(i=internal.to_markdown(), u=units.to_markdown())
+    if sector is not None and not sector.empty:
+        sref = {sym: add_ref(f"ตัวเลข {sym} จาก SET (เทียบหมวด{sec})", SET_FACTSHEET.format(sym))
+                for sym, sec in sector[["symbol", "sector"]].drop_duplicates().itertuples(index=False)}
+        s_tab = sector.assign(ref=sector["symbol"].map(sref))[
+            ["ref", "company", "sector", "metric", "value", "rank", "n", "median"]]
+        prompt += SECTOR_SECTION.format(s=s_tab.to_markdown(index=False))
+    if price is not None and not price.empty and price["big"].any():
+        p = price[price["big"]].head(8)
+        p_tab = pd.DataFrame({
+            "ref": [add_ref(t[0], u[0]) if u and u[0] else "" for t, u in zip(p["titles"], p["urls"])],
+            "company": p["company"], "date": p["date"], "r1_pct": p["r1_pct"], "r3_pct": p["r3_pct"], "z": p["z"],
+            "headlines": [" / ".join(t[:2])[:200] for t in p["titles"]]})
+        prompt += PRICE_SECTION.format(p=p_tab.to_markdown(index=False))
+    if changes:
+        prompt += CHANGES_SECTION.format(ch=_changes_rows(changes, add_ref).to_markdown(index=False))
+    if groups:
+        prompt += GROUP_SECTION.format(g="\n".join(f"- {m} → {g['parent']} ({g['relation']})"
+                                                   for m, g in groups.items()))
+    if refs:
+        prompt += CITE_RULE
     report = llm.chat(prompt).strip()
     if CJK.search(report):  # โมเดลบางครั้งหลุดคำภาษาจีนแม้สั่งไว้แล้ว ให้เขียนใหม่ 1 ครั้ง
         report = llm.chat(prompt + "\n\nIMPORTANT: Thai script only. Do not output any Chinese characters.").strip()
-    report = CJK.sub("", report)
+    report = link_refs(CJK.sub("", report), refs)
     db.save_report(mode, report)
     return report

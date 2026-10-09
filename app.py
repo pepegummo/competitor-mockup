@@ -3,9 +3,8 @@ import json
 import pandas as pd
 import streamlit as st
 
-from core import analyze, collect, db, discover, llm, process, profile
-from core.sources import SourceSkipped, set_api
-from ui import company_panel, results
+from core import analyze, collect, db, discover, llm, pipeline
+from ui import company_panel, company_picker, group_panel, internal_panel, results, watch_panel
 from ui.common import friendly_errors
 from ui.company_panel import ALL_SOURCES
 from ui.labels import CATEGORY_TH, FINANCIALS_KEY, MODES, SENTIMENT_TH
@@ -31,8 +30,11 @@ def save_last_run(**data):
     LAST_RUN.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
-def build_result(companies, report_row, self_name=None, mode="compare", focus=None, report_scope=None):
-    """ข้อมูลของรอบวิเคราะห์ (กรองตามหัวข้อที่สนใจแล้ว) ตารางคิดใหม่ในหน้าผลลัพธ์ตามตัวกรอง"""
+def build_result(companies, report_row, self_name=None, mode="compare", focus=None, report_scope=None, groups=None,
+                 run_id=None, opts=None):
+    """ข้อมูลของรอบวิเคราะห์ (กรองตามหัวข้อที่สนใจแล้ว) ตารางคิดใหม่ในหน้าผลลัพธ์ตามตัวกรอง
+    groups = {บริษัทในเครือ: {parent, relation}} · run_id = รอบใน DB (มีสิ่งที่เปลี่ยนไปจากรอบก่อน)"""
+    run = db.get_run(run_id) if run_id else None
     ids = db.company_ids(companies)
     df = analyze.apply_focus(analyze.load_df(ids), focus)
     if not df.empty:
@@ -46,7 +48,9 @@ def build_result(companies, report_row, self_name=None, mode="compare", focus=No
         focus_label=analyze.focus_label(focus, CATEGORY_TH), df=df,
         fin=analyze.financial_table(fins) if fins else pd.DataFrame(), fin_raw=fins,
         report=report_row["content_md"], report_at=report_row["created_at"], report_id=report_row["id"],
-        report_scope=report_scope, fetched_at=db.last_fetched_at(ids),
+        report_scope=report_scope, fetched_at=db.last_fetched_at(ids), groups=groups or {},
+        run_id=run_id, run_at=run["started_at"] if run else None, changes=run["changes"] if run else None,
+        opts=opts or (run["config"].get("opts") if run else None),
     )
 
 
@@ -58,12 +62,29 @@ def restore_last_result():
     if not report or not db.company_ids(last.get("companies", [])):
         return None
     return build_result(last["companies"], report, last.get("self_name"), last.get("mode", "compare"),
-                        last.get("focus"), last.get("report_scope"))
+                        last.get("focus"), last.get("report_scope"), last.get("groups"), last.get("run_id"),
+                        last.get("opts"))
 
 
 def remember(res):
     save_last_run(companies=res["companies"], report_id=res["report_id"], self_name=res["self_name"],
-                  mode=res["mode"], focus=res["focus"], report_scope=res["report_scope"])
+                  mode=res["mode"], focus=res["focus"], report_scope=res["report_scope"], groups=res["groups"],
+                  run_id=res.get("run_id"), opts=res.get("opts"))
+
+
+def open_run(run_id):
+    """เปิดผลของรอบที่เคยรัน (เช่น รอบอัตโนมัติของชุดติดตาม)"""
+    run = db.get_run(run_id)
+    report = db.get_report(run["report_id"]) if run else None
+    if not report:
+        st.toast("ไม่พบผลของรอบนี้")
+        return
+    cfg = run["config"]
+    res = build_result(cfg["companies"], report, cfg.get("self_name"), cfg.get("mode", "compare"), cfg.get("focus"),
+                       groups=cfg.get("groups"), run_id=run_id)
+    results.reset_filters()
+    st.session_state.result = res
+    remember(res)
 
 
 def on_new_report(report_row, scope):
@@ -74,121 +95,71 @@ def on_new_report(report_row, scope):
     remember(res)
 
 
-def run_pipeline(competitors, limit, self_name=None, origins=None, mode="compare", opts=None, focus=None):
+def add_group_members(top):
+    """หาบริษัทในเครือของบริษัทหลัก (เฉพาะที่ยังไม่เคยหา) คืน (รายชื่อเรียงตามเครือ, groups)"""
+    failed = group_panel.detect(top)
+    if failed:
+        st.caption(f"  หาบริษัทในเครือของ {', '.join(failed)} ไม่สำเร็จ วิเคราะห์ต่อโดยไม่รวม")
+    group_panel.register(top)
+    groups = group_panel.picked(top)
+    ordered, lines = [], []
+    for parent in top:
+        members = [m for m, g in groups.items() if g["parent"] == parent]
+        ordered += [parent] + members
+        if members:
+            lines.append(f"{parent} → {', '.join(members)}")
+    st.write("- " + (" · ".join(lines) if lines else "ไม่มีบริษัทในเครือที่เลือกไว้"))
+    return ordered, groups
+
+
+def st_log(status):
+    """แสดงความคืบหน้าของ pipeline ในกล่องสถานะ"""
+    def log(text, kind="line"):
+        if kind == "step":
+            st.write(f"**{text}**")
+        elif kind == "note":
+            st.caption("  " + text)
+        elif kind == "status":
+            status.update(label=text)
+        else:
+            st.write("- " + text)
+    return log
+
+
+def run_pipeline(competitors, self_name=None, origins=None, mode="compare", opts=None, focus=None,
+                 with_groups=False):
     """self_name=None → Phase 1, มี self_name → Phase 2 (เรา vs คู่แข่ง)
-    opts = {"sources", "fulltext", "review_limit", "financials"} จากแถบซ้าย
-    focus = {"categories", "keywords"} หัวข้อที่สนใจ: ค้นข่าวเพิ่ม และวิเคราะห์เฉพาะเรื่องนั้น"""
+    opts = {"sources", "fulltext", "review_limit", "financials", "limit", "internal"} จากแถบซ้าย
+    focus = {"categories", "keywords"} หัวข้อที่สนใจ: ค้นข่าวเพิ่ม และวิเคราะห์เฉพาะเรื่องนั้น
+    with_groups = เพิ่มบริษัทในเครือที่ติ๊กไว้เป็นรายบริษัทแยก (ไม่นับเป็นคู่แข่งในตารางส่วนต่าง)"""
     origins = origins or {}
-    opts = opts or {"sources": ["google_news"], "fulltext": False, "review_limit": 20, "financials": False}
     companies = ([self_name] if self_name else []) + competitors
-    focus_text = analyze.focus_label(focus, CATEGORY_TH)
     calls_before = llm.call_count
+    groups = {}
     with st.status("กำลังวิเคราะห์...", expanded=True) as status:
-        ids = []
+        log = st_log(status)
         for name in companies:
             if name == self_name:
-                ids.append(db.upsert_company(name, role="self", origin="user"))
+                db.upsert_company(name, role="self", origin="user")
             else:
-                ids.append(db.upsert_company(name, role="competitor", origin=origins.get(name, "user")))
-
-        labels = [collect.SOURCES[k][1] for k in opts["sources"]]
-        st.write(f"**1/3 ดึงข้อมูล** ({', '.join(labels)})"
-                 + (f" · ค้นเพิ่มเรื่อง: {', '.join(collect.topic_queries(focus))}" if focus_text else ""))
-        if "set_news" in opts["sources"] or opts.get("financials"):
-            lookup_symbols(companies)
-        if opts["fulltext"]:
-            status.update(label="ดึงข้อมูลและเนื้อหาเต็ม (อาจใช้เวลาหลายนาที)...")
-        empty = []
-        for cid, row in zip(ids, db.get_companies(companies)):
-            name = row["name"]
-            sources = company_panel.enabled_sources(row, opts["sources"])
-            stats, notes = collect.collect_company(cid, name, limit=limit, sources=sources,
-                                                   fulltext_on=opts["fulltext"], review_limit=opts["review_limit"],
-                                                   focus=focus)
-            parts = [f"{label} {n} (ใหม่ {a})" for label, (n, a) in stats.items()]
-            off = [collect.SOURCES[k][1] for k in opts["sources"] if k not in sources]
-            st.write(f"- **{name}**: " + (" · ".join(parts) or "ไม่มีแหล่งที่ใช้ได้")
-                     + (f" · ปิดไว้: {', '.join(off)}" if off else ""))
-            for note in notes:
-                st.caption(f"  {name} · {note}")
-            if sum(n for label, (n, a) in stats.items() if label != "รีวิวแอป") == 0:
-                empty.append(name)
-        if opts.get("financials"):
-            fetch_financials(ids, companies)
-
-        st.write("**2/3 จัดหมวดด้วย LLM**")
-        saved, skipped = process.classify_pending(ids, on_progress=lambda m: status.update(label=m))
-        st.write(f"- จัดหมวดใหม่ {saved} รายการ" + ("" if saved else " (ทั้งหมดเคยจัดหมวดแล้ว)"))
-        if skipped:
-            st.write(f"- ข้าม {skipped} ชุดที่ LLM ตอบรูปแบบไม่ถูก กดวิเคราะห์อีกครั้งเพื่อลองใหม่")
-
-        all_df = analyze.load_df(ids)
-        df, table_a, table_b, table_c = analyze.tables_from_df(analyze.apply_focus(all_df, focus))
-        if focus_text:
-            st.write(f"- วิเคราะห์เฉพาะเรื่อง **{focus_text}**: {len(df)} รายการจาก {len(all_df)}")
-        if table_a.empty:
-            status.update(label="ไม่พบข่าวของบริษัทที่เลือก" + (" ในเรื่องที่สนใจ" if focus_text else ""),
-                          state="error")
-            return None, empty
-
-        status.update(label="เขียนรายงาน...")
-        st.write("**3/3 เขียนรายงาน**")
-        report_mode = "phase1" if not self_name else ("phase3" if mode == "discover" else "phase2")
-        reviews = analyze.review_table(df)
-        fins = db.financials_by_company(ids)
-        fin = analyze.financial_table(fins) if fins else pd.DataFrame()
-        gap = analyze.gap_table(df, table_b, self_name, reviews, fin) if self_name else None
-        if self_name and (gap is None or gap.empty):
-            # ไม่มีข่าวของเราหรือของคู่แข่ง → เขียนรายงานกลาง ๆ แทน
-            st.write(f"- ไม่มีข่าวพอเทียบกับ {self_name} จึงเขียนรายงานแบบเทียบคู่แข่งแทน")
-            self_name, report_mode = None, "phase1"
-        analyze.write_report(table_a, table_b, table_c, self_name=self_name, gap=gap, mode=report_mode,
-                             reviews=reviews, fin=fin, scope=focus_text or None)
-        report = db.latest_report(report_mode)
+                db.upsert_company(name, role="competitor", origin=origins.get(name, "user"))
+        if with_groups:
+            st.write("**บริษัทในเครือ**")
+            pipeline.lookup_symbols(companies, log)  # ใช้ชื่อหุ้นกันบริษัทในเครือซ้ำกับบริษัทที่เลือกไว้แล้ว
+            companies, groups = add_group_members(companies)
+            for name, g in groups.items():
+                db.upsert_company(name, role="self" if g["parent"] == self_name else "competitor", origin="group")
+        out = pipeline.run(companies, self_name, mode, opts, focus, groups, log=log)
+        if out["error"]:
+            status.update(label=out["error"], state="error")
+            return None, out["empty"]
         status.update(label=f"วิเคราะห์เสร็จ · เรียก LLM {llm.call_count - calls_before} ครั้ง",
                       state="complete", expanded=False)
 
-    res = build_result(companies, report, self_name, mode, focus)
+    res = build_result(companies, out["report"], out["self_name"], mode, focus, groups=groups,
+                       run_id=out["run_id"], opts=opts)
     remember(res)
-    return res, empty
-
-
-def lookup_symbols(companies):
-    """หาชื่อหุ้น SET ให้บริษัทที่ยังไม่เคยหา (1 LLM call ตรวจกับรายชื่อหุ้นจริง) แล้วแจ้งผลให้ผู้ใช้ตรวจ"""
-    missing = [r["name"] for r in db.get_companies(companies) if r["set_symbol"] is None]
-    if not missing:
-        return
-    profiles = profile.suggest_profiles(missing)
-    if not profiles:
-        st.caption("  หาชื่อหุ้น SET อัตโนมัติไม่สำเร็จ ใส่เองได้ใน “แหล่งข้อมูลของแต่ละบริษัท”")
-        return
-    for name in missing:
-        p = profiles.get(name, {"set_symbol": "", "aliases": []})
-        db.set_company_profile(name, p["set_symbol"], p["aliases"])
-    st.write("- ชื่อหุ้น SET ที่ระบบหาให้: " + " · ".join(
-        f"{n} → {profiles.get(n, {}).get('set_symbol') or 'ไม่อยู่ในตลาด'}" for n in missing)
-        + " (ถ้าผิดแก้ได้ใน “แหล่งข้อมูลของแต่ละบริษัท”)")
-
-
-def fetch_financials(ids, companies):
-    """ดึงงบการเงินล่าสุดจาก SET ของบริษัทที่ใส่ชื่อหุ้นไว้ แล้วเก็บลง DB"""
-    st.write("**งบการเงิน (SET)**")
-    for cid, row in zip(ids, db.get_companies(companies)):
-        if FINANCIALS_KEY in row["disabled_sources"]:
-            st.caption(f"  {row['name']} · ปิดงบการเงินไว้สำหรับบริษัทนี้")
-            continue
-        if not row.get("set_symbol"):
-            st.caption(f"  {row['name']} · ไม่มีงบ (ไม่อยู่ในตลาดหลักทรัพย์ฯ หรือยังไม่ได้ใส่ชื่อหุ้น)")
-            continue
-        try:
-            data = set_api.financials(row["set_symbol"])
-        except SourceSkipped as e:
-            st.caption(f"  {row['name']} · {e}")
-            continue
-        db.save_financials(cid, row["set_symbol"], data)
-        filed = data["latest"].get("filed_url") or ""
-        st.write(f"- **{row['name']}**: {row['set_symbol']} งบ {data['latest']['period']}"
-                 + (f" ([ไฟล์งบ]({filed}))" if filed else ""))
+    return res, out["empty"]
 
 
 # ---------- ส่วนประกอบหน้า ----------
@@ -256,7 +227,7 @@ run = find = False
 if "mode_input" not in st.session_state:
     last = res or {}
     st.session_state.mode_input = last["mode"] if res and res["mode"] in MODES else "compare"
-    st.session_state.self_input = last.get("self_name") or ""
+    st.session_state.self_input = last.get("self_name") or None
     st.session_state.comp_input = [c for c in (res["companies"] if res else DEFAULT_COMPANIES)
                                    if c != last.get("self_name")][:5]
     st.session_state.focus_cats = [c for c in last.get("focus", {}).get("categories", []) if c in FOCUS_CATEGORIES]
@@ -274,22 +245,32 @@ with st.sidebar:
 
     self_name = None
     if mode in ("self", "discover"):
-        self_name = st.text_input("บริษัทของเรา", key="self_input", placeholder="เช่น AIS").strip() or None
+        choices, labels = company_picker.options([st.session_state.self_input])
+        self_name = st.selectbox(
+            "บริษัทของเรา", choices, key="self_input", format_func=lambda n: labels.get(n, n),
+            accept_new_options=True, placeholder="ค้นชื่อหุ้น/ชื่อบริษัท หรือพิมพ์ชื่อบริษัทนอกตลาด",
+        )
+        self_name = (self_name or "").strip() or None
+
+    with_groups = st.toggle("รวมบริษัทในเครือ", key="with_groups", value=True,
+                            help="เช่น CP → CPALL, CPF, CPAXT · PTT → PTTEP, OR, GC วิเคราะห์แยกเป็นรายบริษัท "
+                                 "(ไม่นับเป็นคู่แข่ง) ตรวจความเป็นเจ้าของจากผู้ถือหุ้นใหญ่ใน SET")
 
     if mode == "discover":
         top_x = st.slider("จำนวนคู่แข่งที่ต้องการ", 3, 10, 5)
-        industry = st.text_input("อุตสาหกรรม (ไม่บังคับ)", placeholder="เช่น โทรคมนาคม, ส่งอาหาร")
+        industry = st.text_input("อุตสาหกรรม (ไม่บังคับ)", placeholder="เช่น ธนาคาร, โทรคมนาคม, ส่งอาหาร")
         country = st.text_input("ประเทศ", "ประเทศไทย") if adv else "ประเทศไทย"
     else:
-        options = sorted(set(db.company_names()) | set(DEFAULT_COMPANIES) | set(st.session_state.comp_input),
-                         key=str.lower)
+        choices, labels = company_picker.options(st.session_state.comp_input)
         competitors = st.multiselect(
-            "คู่แข่งที่ต้องการเทียบ", options, key="comp_input",
+            "คู่แข่งที่ต้องการเทียบ", choices, key="comp_input", format_func=lambda n: labels.get(n, n),
             accept_new_options=True, max_selections=5,
-            placeholder="พิมพ์ชื่อบริษัทแล้วกด Enter",
-            help="เลือก 2–5 ราย พิมพ์ชื่อบริษัทใหม่ได้",
+            placeholder="ค้นชื่อหุ้น/ชื่อบริษัท เช่น KTB, แม็คกรุ๊ป",
+            help="เลือก 2–5 ราย · บนสุดคือบริษัทที่เคยวิเคราะห์ ตามด้วยบริษัทใน SET และ mai ทั้งหมด "
+                 "· บริษัทนอกตลาดพิมพ์ชื่อแล้วกด Enter",
         )
         competitors = [c for c in competitors if c != self_name]
+        company_picker.peer_button(self_name or (competitors[0] if competitors else None))
 
     st.subheader("② สนใจเรื่องอะไร", divider="gray")
     focus_cats = st.pills("หมวด", FOCUS_CATEGORIES, format_func=CATEGORY_TH.get, selection_mode="multi",
@@ -318,7 +299,8 @@ with st.sidebar:
                    "เปิด “ตัวเลือกละเอียด” เพื่อเลือกเอง")
     picked = picked or []
     opts = {"sources": [k for k in picked if k != FINANCIALS_KEY], "fulltext": full,
-            "review_limit": review_limit, "financials": FINANCIALS_KEY in picked}
+            "review_limit": review_limit, "financials": FINANCIALS_KEY in picked, "limit": limit,
+            "internal": st.session_state.get("internal_llm", True)}
 
     st.divider()
     if mode == "discover":
@@ -353,7 +335,8 @@ def finish(new_res, empty):
 
 if run:
     with friendly_errors():
-        res = finish(*run_pipeline(competitors, limit, self_name=self_name, mode=mode, opts=opts, focus=focus))
+        res = finish(*run_pipeline(competitors, self_name=self_name, mode=mode, opts=opts, focus=focus,
+                                   with_groups=with_groups))
 
 if find:
     with friendly_errors():
@@ -373,7 +356,17 @@ if mode == "discover":
 else:
     upcoming = ([self_name] if self_name else []) + competitors
     panel_self = self_name
-company_panel.render(list(dict.fromkeys(upcoming)), panel_self, picked, adv)
+upcoming = list(dict.fromkeys(upcoming))
+members = {}
+if with_groups:
+    group_panel.render(upcoming)
+    group_panel.register(upcoming)
+    members = group_panel.picked(upcoming)
+company_panel.render(upcoming + list(members), panel_self, picked, adv, members)
+internal_panel.render(panel_self or (res or {}).get("self_name"))
+if watch_panel.render(res, open_run):
+    st.rerun()
+res = st.session_state.result
 
 if mode == "discover" and disc and disc["pending"]:
     panel = st.empty()
@@ -383,8 +376,8 @@ if mode == "discover" and disc and disc["pending"]:
         st.stop()
     panel.empty()
     with friendly_errors():
-        res = finish(*run_pipeline(names, limit, self_name=disc["company"], origins=origins, mode="discover",
-                                   opts=opts, focus=focus))
+        res = finish(*run_pipeline(names, self_name=disc["company"], origins=origins, mode="discover",
+                                   opts=opts, focus=focus, with_groups=with_groups))
         disc["pending"] = False
 
 if not res or (res["df"].empty and res["fin"].empty):

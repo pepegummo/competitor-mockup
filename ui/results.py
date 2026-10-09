@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
-from core import analyze, collect, db
+from core import analyze, ask, benchmark, collect, db, impact
 from ui import charts, insights
 from ui.common import fmt_time, friendly_errors
 from ui.labels import CATEGORY_TH, GAP_ITEM_TH, GAP_TYPE_TH, GLOSSARY, SENTIMENT_COLORS, SENTIMENT_TH
@@ -85,24 +85,29 @@ def build_view(res, f):
     fin_raw = {k: v for k, v in res["fin_raw"].items() if k in companies}
     reviews = analyze.review_table(df) if not df.empty else pd.DataFrame()
     self_name = res["self_name"] if res["self_name"] in companies else None
-    gap = (analyze.gap_table(df, b, self_name, reviews, fin)
+    groups = {m: g for m, g in res.get("groups", {}).items() if m in companies}
+    internal = analyze.internal_table(companies)
+    gap = (analyze.gap_table(df, b, self_name, reviews, fin, members=groups, internal=internal)
            if self_name and not b.empty else pd.DataFrame())
     return dict(df=df, a=a, b=b, c=c, reviews=reviews, gap=gap, fin=fin, fin_raw=fin_raw,
-                companies=companies, self_name=self_name)
+                companies=companies, self_name=self_name, groups=groups, internal=internal)
 
 
 # ---------- ส่วนบนของหน้า ----------
 
 def kpi_cards(v):
     df, table_b, self_name = v["df"], v["b"], v["self_name"]
-    competitors = [c for c in v["companies"] if c != self_name and c in table_b.index]
+    groups = v["groups"]
+    competitors = [c for c in v["companies"] if c != self_name and c in table_b.index and c not in groups]
     news = analyze.news_only(df)
     for start in range(0, len(v["companies"]), 4):
         names = v["companies"][start:start + 4]
         for col, name in zip(st.columns(len(names)), names):
             with col.container(border=True):
                 is_self = name == self_name
-                st.markdown(f"#### {name}" + ("  :blue-badge[บริษัทเรา]" if is_self else ""))
+                parent = groups.get(name, {}).get("parent")
+                st.markdown(f"#### {name}" + ("  :blue-badge[บริษัทเรา]" if is_self else "")
+                            + (f"  :gray-badge[ในเครือ {parent}]" if parent else ""))
                 sub = news[news["company"] == name]
                 if not sub.empty and name in table_b.index:
                     pos, neg = table_b.loc[name, "positive"], table_b.loc[name, "negative"]
@@ -132,6 +137,37 @@ def kpi_cards(v):
                               (("รายได้", "revenue_yoy_pct"), ("กำไร", "net_profit_yoy_pct")) if pd.notna(f[col])]
                     st.caption(f"งบ {f['period']}: รายได้ **{f['revenue_mb']:,.0f} ลบ.**"
                                + (f" · เทียบปีก่อน {' · '.join(growth)}" if growth else ""))
+
+
+CHANGE_ICON = {"set": "📢", "negative": "⚠️", "financials": "💰", "sentiment": "📉", "reviews": "⭐",
+               "promotion": "🏷️", "volume": "🆕", "price_move": "📈"}
+
+
+def changes_box(res):
+    """สิ่งที่เปลี่ยนไปตั้งแต่รอบก่อน (คิดจากข้อมูลโดยระบบ ไม่ใช่ LLM)"""
+    changes = res.get("changes")
+    if changes is None:
+        return
+    if not changes:
+        st.caption(":material/history: เทียบกับรอบก่อน: ไม่มีอะไรเปลี่ยน หรือเป็นรอบแรกของบริษัทเหล่านี้")
+        return
+
+    def line(c):
+        out = f"{CHANGE_ICON.get(c['kind'], '•')} **{c['company']}** {c['text']}"
+        items = "".join(f"\n    - [{it['title']}]({it['url']})" if it["url"] else f"\n    - {it['title']}"
+                        for it in c["items"][:3])
+        return "- " + out + items
+
+    high = [c for c in changes if c["level"] == "high"]
+    info = [c for c in changes if c["level"] != "high"]
+    with st.container(border=True):
+        st.markdown("##### อะไรเปลี่ยนไปตั้งแต่รอบก่อน" + (f"  :red-badge[สำคัญ {len(high)}]" if high else ""))
+        st.caption(f"รอบนี้เสร็จเมื่อ {fmt_time(res.get('run_at'))} · เทียบกับรอบล่าสุดก่อนหน้าของแต่ละบริษัท")
+        if high:
+            st.markdown("\n".join(line(c) for c in high))
+        if info:
+            with st.expander(f"เรื่องอื่น ๆ ({len(info)})", expanded=not high):
+                st.markdown("\n".join(line(c) for c in info))
 
 
 def glossary():
@@ -175,7 +211,9 @@ def rewrite_report(res, v, scope, on_report):
     mode = "phase1" if not self_name else ("phase3" if res["mode"] == "discover" else "phase2")
     full_scope = " · ".join(s for s in (res.get("focus_label"), scope) if s)  # หัวข้อที่สนใจ + ตัวกรอง
     analyze.write_report(v["a"], v["b"], v["c"], self_name=self_name, gap=v["gap"] if self_name else None,
-                         mode=mode, reviews=v["reviews"], fin=v["fin"], scope=full_scope)
+                         mode=mode, reviews=v["reviews"], fin=v["fin"], scope=full_scope, groups=v["groups"],
+                         changes=res.get("changes"),
+                         internal=v["internal"] if st.session_state.get("internal_llm", True) else None)
     on_report(db.latest_report(mode), scope)
 
 
@@ -201,12 +239,13 @@ def tab_gap(v):
     with st.expander("ตารางส่วนต่างทั้งหมด"):
         table = gap.copy()
         table["type"] = table["type"].map(GAP_TYPE_TH)
-        table["item"] = table["item"].map(GAP_ITEM_TH)
+        table["item"] = table["item"].map(lambda i: GAP_ITEM_TH.get(i, i))
         st.dataframe(
             table.rename(columns={"type": "ด้าน", "item": "รายการ", "us_pct": self_name,
                                   "competitor_avg_pct": "คู่แข่งเฉลี่ย", "gap_pts": "ส่วนต่าง"}),
             hide_index=True, width="stretch")
-        st.caption("หน่วยเป็น % ยกเว้นคะแนนรีวิวเป็นดาว (1–5) · แถวการเงินเทียบเฉพาะคู่แข่งที่อยู่ในตลาดหลักทรัพย์ฯ")
+        st.caption("หน่วยเป็น % ยกเว้นคะแนนรีวิวเป็นดาว (1–5) และข้อมูลภายในใช้หน่วยตามไฟล์ที่อัปโหลด · "
+                   "แถวการเงินเทียบเฉพาะคู่แข่งที่อยู่ในตลาดหลักทรัพย์ฯ")
 
 
 def section_categories(v):
@@ -246,6 +285,37 @@ def section_reviews(v):
     )
 
 
+BANK_COLUMNS = ("nii_mb", "nii_yoy_pct", "fee_income_mb", "fee_income_yoy_pct", "nim_approx_pct",
+                "cost_to_income_pct", "credit_cost_pct", "ldr_pct", "loans_mb", "deposits_mb")
+
+
+def section_banks(banks, self_name):
+    st.markdown("##### ตัวชี้วัดธนาคาร")
+    st.caption("คิดจากงบย่อที่ยื่น SET · ตัวเลขต่อปีแปลงจากงบสะสม (เช่น 6 เดือน × 2) · "
+               "ไม่มี NPL เพราะงบย่อของ SET ไม่มีข้อมูลนี้")
+    st.altair_chart(charts.bank_ratio_chart(banks, self_name), width="stretch")
+    st.dataframe(
+        banks, width="stretch",
+        column_config={
+            "company": st.column_config.TextColumn("บริษัท"),
+            "nii_mb": st.column_config.NumberColumn("รายได้ดอกเบี้ยสุทธิ (ลบ.)", format="localized"),
+            "nii_yoy_pct": st.column_config.NumberColumn("ดอกเบี้ยสุทธิโต (%)", format="%+.1f"),
+            "fee_income_mb": st.column_config.NumberColumn("ค่าธรรมเนียมสุทธิ (ลบ.)", format="localized"),
+            "fee_income_yoy_pct": st.column_config.NumberColumn("ค่าธรรมเนียมโต (%)", format="%+.1f"),
+            "nim_approx_pct": st.column_config.NumberColumn("NIM โดยประมาณ (%)", format="%.2f",
+                                                            help=GLOSSARY["NIM โดยประมาณ"]),
+            "cost_to_income_pct": st.column_config.NumberColumn("Cost to income (%)", format="%.1f",
+                                                                help=GLOSSARY["Cost to income"]),
+            "credit_cost_pct": st.column_config.NumberColumn("Credit cost (%)", format="%.2f",
+                                                             help=GLOSSARY["Credit cost"]),
+            "ldr_pct": st.column_config.NumberColumn("สินเชื่อ/เงินฝาก (%)", format="%.1f",
+                                                     help=GLOSSARY["สินเชื่อ/เงินฝาก (LDR)"]),
+            "loans_mb": st.column_config.NumberColumn("สินเชื่อสุทธิ (ลบ.)", format="localized"),
+            "deposits_mb": st.column_config.NumberColumn("เงินฝาก (ลบ.)", format="localized"),
+        },
+    )
+
+
 def section_finance(res, v):
     fin, raw, self_name = v["fin"], v["fin_raw"], v["self_name"]
     missing = [c for c in v["companies"] if c not in fin.index]
@@ -266,12 +336,17 @@ def section_finance(res, v):
         st.altair_chart(charts.finance_ratio_chart(fin, self_name), width="stretch")
         st.caption("รายได้/กำไรโต = เทียบช่วงเดียวกันปีก่อน (ถ้าปีก่อนขาดทุนจะไม่แสดง) · ROE มาจากงบทั้งปีล่าสุด")
     order = charts.company_order(list(fin.index), self_name)
+    bank_cols = [c for c in BANK_COLUMNS if c in fin.columns]
     st.dataframe(
-        fin.loc[order], width="stretch",
+        fin.loc[order].drop(columns=bank_cols), width="stretch",
         column_config={
             "company": st.column_config.TextColumn("บริษัท"),
+            "symbol": st.column_config.TextColumn("ชื่อหุ้น"),
+            "sector": st.column_config.TextColumn("หมวดธุรกิจ (SET)"),
             "period": st.column_config.TextColumn("งบรอบ", help="6M = ครึ่งปีแรก, 9M = 9 เดือน"),
-            "revenue_mb": st.column_config.NumberColumn("รายได้รวม (ลบ.)", format="localized"),
+            "revenue_mb": st.column_config.NumberColumn("รายได้รวม (ลบ.)", format="localized",
+                                                        help="ธนาคารใช้รายได้จากการดำเนินงาน "
+                                                             "(ดอกเบี้ยสุทธิ + ค่าธรรมเนียมสุทธิ + อื่น ๆ)"),
             "revenue_yoy_pct": st.column_config.NumberColumn("รายได้โต (%)", format="%+.1f",
                                                              help="เทียบช่วงเดียวกันของปีก่อน"),
             "net_profit_mb": st.column_config.NumberColumn("กำไรสุทธิ (ลบ.)", format="localized"),
@@ -288,20 +363,157 @@ def section_finance(res, v):
             "dividend_yield_pct": st.column_config.NumberColumn("ปันผล (%)", format="%.2f"),
         },
     )
-    links = [f"[{f['symbol']} {f['latest']['period']}]({f['latest']['filed_url']})"
+    banks = fin.loc[order, bank_cols].dropna(how="all") if bank_cols else pd.DataFrame()
+    if not banks.empty:
+        section_banks(banks, self_name)
+    links =[f"[{f['symbol']} {f['latest']['period']}]({f['latest']['filed_url']})"
              for f in raw.values() if f["latest"].get("filed_url")]
     if links:
         st.caption("งบฉบับเต็ม (zip): " + " · ".join(links))
+
+
+def section_trends(v):
+    news = analyze.news_only(v["df"])
+    st.caption("นับตามวันที่เผยแพร่ รายสัปดาห์ · ข้อมูลย้อนหลังจะยาวขึ้นเรื่อย ๆ เมื่อรันอัตโนมัติทุกวัน "
+               "(แต่ละรอบดึงได้เฉพาะข่าวล่าสุดของแต่ละแหล่ง)")
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown("##### จำนวนข่าวต่อสัปดาห์")
+        st.altair_chart(charts.weekly_volume_chart(news, v["self_name"]), width="stretch")
+    with right:
+        st.markdown("##### ข่าวลบต่อสัปดาห์ (%)")
+        st.altair_chart(charts.weekly_negative_chart(news, v["self_name"]), width="stretch")
+        st.caption("แสดงเฉพาะสัปดาห์ที่มีข่าวอย่างน้อย 3 ข่าว")
+    reviews = v["df"][v["df"]["source_type"] == "review"]
+    if reviews["rating"].notna().sum() >= 5:
+        st.markdown("##### คะแนนรีวิวเฉลี่ยต่อสัปดาห์")
+        st.altair_chart(charts.weekly_stars_chart(reviews, v["self_name"]), width="stretch")
+
+
+def section_internal(v):
+    table, units = v["internal"], v["internal"].attrs.get("units", {})
+    st.caption("ตัวเลขจากไฟล์ที่อัปโหลด (ไม่ได้มาจากแหล่งสาธารณะ) · แก้หรือเพิ่มได้ใน “ข้อมูลภายในบริษัท” ด้านบน")
+    metrics = list(table.columns)
+    pick = st.selectbox("ตัวชี้วัด", metrics, key="internal_pick") if len(metrics) > 1 else metrics[0]
+    u = units.get(pick, {})
+    st.altair_chart(charts.internal_chart(table, pick, v["self_name"], u.get("unit", "")), width="stretch")
+    st.dataframe(table.rename(columns=lambda m: f"{m} ({units.get(m, {}).get('unit')})"
+                              if units.get(m, {}).get("unit") else m),
+                 width="stretch")
+    periods = {m: x["period"] for m, x in units.items() if x.get("period")}
+    if periods:
+        st.caption("ช่วงเวลา: " + " · ".join(f"{m} {p}" for m, p in periods.items()))
+
+
+def section_sector(v):
+    companies = benchmark.symbols_of(v["companies"])
+    symbols = list(dict.fromkeys(companies.values()))
+    fr = benchmark.frames(symbols)
+    missing = [s for s in symbols if s not in fr]
+    if missing and st.button(f"ดึงตัวเลขทุกบริษัทในหมวดของ {', '.join(missing)} จาก SET",
+                             icon=":material/download:", key="bench_fetch",
+                             help="ไม่ใช้ LLM · ประมาณ 1 วินาทีต่อ 4 บริษัท · เก็บไว้ใช้ซ้ำ 1 วัน"):
+        with friendly_errors(), st.spinner("กำลังดึงตัวเลขทุกบริษัทในหมวด..."):
+            benchmark.refresh(missing, log=st.caption)
+        st.rerun()
+    if not fr:
+        st.caption("ยังไม่มีตัวเลขของหมวดธุรกิจ กดปุ่มด้านบนเพื่อดึงจาก SET")
+        return
+    tb = benchmark.table(companies)
+    st.caption("เทียบกับทุกบริษัทจดทะเบียนในหมวดธุรกิจเดียวกันของ SET (ไม่ใช่แค่คู่แข่งที่เลือก) · "
+               "ใช้งบทั้งปีล่าสุดของแต่ละบริษัท บริษัทที่ปีบัญชีจบกลางปีจะเป็นปีงบที่ต่างกัน · ไม่ผ่าน LLM")
+    insights.show(st, benchmark.highlights(tb))
+    by_group = {}
+    for name, sym in companies.items():
+        if sym in fr:
+            by_group.setdefault(fr[sym]["group"], []).append((name, sym))
+    labels = {g: f"{fr[members[0][1]]['name']} · {len(fr[members[0][1]]['df'])} บริษัท"
+              for g, members in by_group.items()}
+    group = (st.segmented_control("หมวด", list(by_group), format_func=labels.get, key="bench_group",
+                                  default=list(by_group)[0], label_visibility="collapsed")
+             if len(by_group) > 1 else list(by_group)[0]) or list(by_group)[0]
+    members = by_group[group]
+    df = fr[members[0][1]]["df"]
+    st.markdown(f"##### {labels[group]}")
+    st.altair_chart(charts.sector_strip_chart(df, benchmark.percentiles(df),
+                                              {sym: name for name, sym in members}, benchmark.METRIC_TH),
+                    width="stretch")
+    rows = tb[tb["symbol"].isin([sym for _, sym in members])]
+    if not rows.empty:
+        cell = rows.assign(ค่า=rows.apply(lambda r: f"{r['value']:,.2f}  (อันดับ {r['rank']}/{r['n']})", axis=1))
+        pivot = cell.pivot(index="company", columns="metric", values="ค่า")
+        median = rows.drop_duplicates("metric").set_index("metric")["median"].map(lambda x: f"{x:,.2f}")
+        pivot.loc["มัธยฐานของหมวด"] = median
+        cols = [m for m in benchmark.METRICS if m in pivot.columns]
+        st.dataframe(pivot[cols].rename(columns=benchmark.METRIC_TH), width="stretch")
+    as_of = df["as_of"].dropna().max() if "as_of" in df else ""
+    st.caption(f"ราคาหุ้น ณ {as_of} · อันดับ 1 = ดีที่สุด (D/E ต่ำสุด, P/E ต่ำสุด = ราคาถูกเมื่อเทียบกำไร) · "
+               "บริษัทที่ไม่มีตัวเลข (เช่น ขาดทุนจึงไม่มี P/E) ไม่ถูกนับ")
+
+
+def section_price(v):
+    companies = benchmark.symbols_of(v["companies"])
+    px = impact.prices(set(companies.values()))
+    missing = sorted(set(companies.values()) - set(px))
+    if missing and st.button(f"ดึงราคาหุ้น 6 เดือนของ {', '.join(missing)} จาก SET", icon=":material/download:",
+                             key="px_fetch", help="ไม่ใช้ LLM · 1 call ต่อหุ้น"):
+        with friendly_errors(), st.spinner("กำลังดึงราคาหุ้น..."):
+            impact.refresh(missing, log=st.caption)
+        st.rerun()
+    ev = impact.events(v["df"], companies)
+    if not px or ev.empty:
+        st.caption("ยังไม่มีราคาหุ้นหรือข่าวในช่วงที่มีราคา")
+        return
+    st.caption("วันที่มีข่าวหรือประกาศ SET แล้วหุ้นขยับเท่าไรใน 1 และ 3 วันทำการ เทียบราคาปิดก่อนข่าว · "
+               f"“ผิดปกติ” = ขยับเกิน {impact.Z_LIMIT:.0f} เท่าของความผันผวนรายวันปกติของหุ้นตัวนั้น · "
+               "ข่าวหลัง 16:30 นับเป็นวันทำการถัดไป · ยังไม่ได้หักผลของตลาดรวมและวันขึ้นเครื่องหมาย XD · ไม่ผ่าน LLM")
+    big = ev[ev["big"]]
+    lines = []
+    for _, r in big.head(3).iterrows():
+        move = r["r3_pct"] if pd.notna(r["r3_pct"]) else r["r1_pct"]
+        link = f"[{r['titles'][0][:80]}]({r['urls'][0]})" if r["urls"] and r["urls"][0] else r["titles"][0][:80]
+        lines.append(f"**{r['company']}** {r['date']}: {move:+.1f}% ใน 3 วัน ({abs(r['z']):.1f} เท่าของปกติ) หลัง {link}")
+    insights.show(st, lines or ["ไม่มีวันไหนที่หุ้นขยับผิดปกติหลังข่าวในช่วงนี้"])
+    names = [n for n in v["companies"] if n in companies and companies[n] in px]
+    pick = st.segmented_control("บริษัท", names, key="px_pick", default=names[0],
+                                label_visibility="collapsed") or names[0]
+    st.altair_chart(charts.price_news_chart(px[companies[pick]], ev[ev["company"] == pick]), width="stretch")
+    st.markdown("##### วันที่หุ้นขยับมากที่สุดหลังข่าว")
+    table = ev.head(15).assign(หัวข้อ=ev["titles"].map(lambda t: " / ".join(t[:2])),
+                               ลิงก์=ev["urls"].map(lambda u: u[0] if u else None),
+                               น้ำเสียง=ev["sentiment"].map(SENTIMENT_TH))
+    st.dataframe(
+        table, hide_index=True, width="stretch",
+        column_order=["company", "date", "r1_pct", "r3_pct", "z", "big", "news", "น้ำเสียง", "หัวข้อ", "ลิงก์"],
+        column_config={
+            "company": st.column_config.TextColumn("บริษัท"),
+            "date": st.column_config.TextColumn("วันทำการ"),
+            "r1_pct": st.column_config.NumberColumn("1 วัน (%)", format="%+.2f"),
+            "r3_pct": st.column_config.NumberColumn("3 วัน (%)", format="%+.2f"),
+            "z": st.column_config.NumberColumn("เท่าของปกติ", format="%+.1f",
+                                               help="ผลตอบแทน ÷ ความผันผวนรายวันปกติของหุ้น (ติดลบ = ลง)"),
+            "big": st.column_config.CheckboxColumn("ผิดปกติ"),
+            "news": st.column_config.NumberColumn("ข่าว"),
+            "หัวข้อ": st.column_config.TextColumn(width="large"),
+            "ลิงก์": st.column_config.LinkColumn(display_text="เปิด"),
+        })
 
 
 def tab_deep(res, v):
     sections = {}
     if not v["a"].empty:
         sections["หมวดข่าว"] = lambda: section_categories(v)
+    if not v["df"].empty and charts.week_start(analyze.news_only(v["df"])["published_dt"].dropna()).nunique() >= 2:
+        sections["แนวโน้ม"] = lambda: section_trends(v)
     if not v["reviews"].empty:
         sections["รีวิวแอป"] = lambda: section_reviews(v)
     if not v["fin"].empty:
         sections["งบการเงิน"] = lambda: section_finance(res, v)
+    if benchmark.symbols_of(v["companies"]):
+        sections["เทียบทั้งหมวด"] = lambda: section_sector(v)
+        sections["ราคาหุ้นหลังข่าว"] = lambda: section_price(v)
+    if not v["internal"].empty:
+        sections["ข้อมูลภายใน"] = lambda: section_internal(v)
     if not sections:
         st.caption("ไม่มีข้อมูลตามตัวกรองนี้")
         return
@@ -333,6 +545,51 @@ def tab_data(v):
                        icon=":material/table:", on_click="ignore")
 
 
+def _examples(res):
+    first = res["self_name"] or res["companies"][0]
+    out = [f"{first} มีข่าวลบเรื่องอะไรบ้าง", "ใครมีโปรโมชันหรือสินค้าใหม่ใน 30 วันล่าสุด"]
+    if benchmark.symbols_of(res["companies"]):
+        out += ["หุ้นตัวไหนขยับแรงหลังข่าว เป็นข่าวอะไร", f"อัตรากำไรของ {first} อยู่อันดับไหนในหมวด"]
+    return out
+
+
+def _ask_later(question):
+    st.session_state.ask_pending = question
+
+
+def tab_ask(res):
+    st.caption("ตอบจากข้อมูลที่ระบบเก็บไว้ของบริษัทในผลนี้เท่านั้น (ข่าว ประกาศ SET รีวิว งบ อันดับในหมวด ราคาหุ้น) "
+               "ไม่ใช้ความรู้ของ LLM · ทุกข้อมีลิงก์ที่มา · ไม่มีข้อมูลจะตอบว่าไม่มี · ใช้ LLM 2 ครั้งต่อคำถาม")
+    key = f"ask_history_{res.get('report_id')}"
+    history = st.session_state.setdefault(key, [])
+    cols = st.columns(len(_examples(res)))
+    for i, (col, q) in enumerate(zip(cols, _examples(res))):
+        col.button(q, key=f"ask_ex_{i}", on_click=_ask_later, args=(q,), width="stretch")
+    question = st.chat_input("ถามเกี่ยวกับคู่แข่ง เช่น “AP เปิดโครงการใหม่อะไรบ้าง”", key="ask_input")
+    question = question or st.session_state.pop("ask_pending", None)
+    if question:
+        companies = benchmark.symbols_of(res["companies"])
+        with friendly_errors(), st.spinner("กำลังค้นข้อมูลที่เก็บไว้และเขียนคำตอบ..."):
+            out = ask.answer(question, res["df"], res["companies"], fin=res["fin"],
+                             sector=benchmark.table(companies) if companies else None,
+                             price=impact.events(res["df"], companies) if companies else None)
+            history.insert(0, {"q": question, **out})
+    for h in history:
+        with st.chat_message("user"):
+            st.markdown(h["q"])
+        with st.chat_message("assistant"):
+            st.markdown(h["answer"])
+            f = h["filters"]
+            scope = [", ".join(f["companies"]) or "ทุกบริษัท"]
+            if f["keywords"]:
+                scope.append("คำค้น " + ", ".join(f["keywords"]))
+            if f["days"]:
+                scope.append(f"{f['days']} วันล่าสุด")
+            st.caption(f"ใช้ {h['used']} รายการ · ค้นจาก: {' · '.join(scope)}"
+                       + (" · รวมตัวเลขงบ/อันดับ/ราคาหุ้น" if f["needs_numbers"] else "")
+                       + f" · LLM {h['llm_calls']} ครั้ง")
+
+
 # ---------- ประกอบหน้า ----------
 
 def show(res, on_report):
@@ -346,22 +603,23 @@ def show(res, on_report):
     with gloss:
         glossary()
 
+    changes_box(res)
     f = filter_bar(res)
     scope = describe(f)
     active = bool(scope)
     v = build_view(res, f)
     if active:
         st.caption(f"กำลังกรอง: {scope} · เหลือ {len(v['df'])} จาก {len(res['df'])} รายการ")
-    if v["df"].empty and v["fin"].empty:
+    if v["df"].empty and v["fin"].empty and v["internal"].empty:
         st.warning("ไม่มีข้อมูลตามตัวกรองนี้ ลองขยายช่วงเวลาหรือกด “ล้าง”")
         return
 
     kpi_cards(v)
     has_gap = bool(v["self_name"]) and not v["gap"].empty
-    names = ["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["เจาะลึก", "ข้อมูลทั้งหมด"]
+    names = ["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["เจาะลึก", "ถามข้อมูล", "ข้อมูลทั้งหมด"]
     renders = ([lambda: tab_summary(res, v, f, active, scope, on_report)]
                + ([lambda: tab_gap(v)] if has_gap else [])
-               + [lambda: tab_deep(res, v), lambda: tab_data(v)])
+               + [lambda: tab_deep(res, v), lambda: tab_ask(res), lambda: tab_data(v)])
     for tab, render in zip(st.tabs(names), renders):
         with tab:
             render()

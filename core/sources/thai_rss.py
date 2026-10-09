@@ -43,14 +43,16 @@ def _all_entries():
 
 
 def _pattern(names):
-    """ชื่ออังกฤษต้องตรงทั้งคำและตัวพิมพ์ (กัน 'NT' ไปตรงกับ 'ANT' หรือคำว่า true ทั่วไป) ชื่อไทยตรงแบบ substring"""
+    """ชื่ออังกฤษต้องตรงทั้งคำ (กัน 'NT' ไปตรงกับ 'ANT') ชื่อสั้นต้องตรงตัวพิมพ์ด้วย (กันคำว่า true ทั่วไป)
+    ชื่อยาวไม่สนตัวพิมพ์ (ทะเบียน SET เขียน "MC GROUP" แต่ข่าวเขียน "Mc Group") ชื่อไทยตรงแบบ substring"""
     parts = []
     for n in names:
         n = n.strip()
         if not n:
             continue
         if re.fullmatch(r"[\x00-\x7f]+", n):
-            parts.append(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])")
+            word = rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])"
+            parts.append(f"(?i:{word})" if len(n) >= 6 else word)
         else:
             parts.append(re.escape(n))
     return re.compile("|".join(parts)) if parts else None

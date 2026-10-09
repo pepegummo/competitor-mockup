@@ -46,12 +46,75 @@ def _get(path, **params):
 
 
 def stock_list():
-    """{ชื่อหุ้น: {nameTH, nameEN}} ของหลักทรัพย์ทั้งหมด (โหลดครั้งเดียวต่อ process)"""
+    """{ชื่อหุ้น: {nameTH, nameEN, type, market, industry, sector}} ของหลักทรัพย์ทั้งหมด รวมใบสำคัญแสดงสิทธิ DR ETF
+    (โหลดครั้งเดียวต่อ process)"""
     global _stock_list
     if _stock_list is None:
-        _stock_list = {s["symbol"]: {"nameTH": s.get("nameTH", ""), "nameEN": s.get("nameEN", "")}
+        _stock_list = {s["symbol"]: {"nameTH": s.get("nameTH", ""), "nameEN": s.get("nameEN", ""),
+                                     "type": s.get("securityType", ""), "market": s.get("market", ""),
+                                     "industry": s.get("industry", ""), "sector": s.get("sector", "")}
                        for s in _get("/api/set/stock/list").get("securitySymbols", [])}
     return _stock_list
+
+
+def listed_companies():
+    """เฉพาะหุ้นสามัญของบริษัทใน SET และ mai (~930 ตัว) ใช้เป็นรายชื่อให้เลือก"""
+    return {k: v for k, v in stock_list().items() if v["type"] == "S"}
+
+
+def peers(symbol):
+    """หุ้นทุกตัวในหมวดธุรกิจเดียวกัน คืน (รหัสหมวด, [ชื่อหุ้น]) · หุ้นใน mai ไม่มี sector ใช้ industry ใน mai แทน"""
+    listed = listed_companies()
+    me = listed.get(symbol.strip().upper())
+    if not me:
+        raise SourceSkipped(f"ไม่พบ {symbol} ในรายชื่อหุ้นสามัญของ SET")
+    if me["sector"]:
+        return me["sector"], [k for k, v in listed.items() if v["sector"] == me["sector"]]
+    return (f"{me['market']}-{me['industry']}",
+            [k for k, v in listed.items() if not v["sector"] and v["market"] == me["market"]
+             and v["industry"] == me["industry"]])
+
+
+def _growth(cur, prev):
+    if cur is None or not prev or prev <= 0:
+        return None
+    return round((cur - prev) / prev * 100, 1)
+
+
+def highlight(symbol):
+    """ตัวเลขสรุปของ 1 หุ้น (2 call) ใช้เทียบทั้งหมวด: งบทั้งปีล่าสุดเทียบปีก่อน + มูลค่าตลาด P/E P/BV ปันผล
+    ใช้เฉพาะงบทั้งปี (แถวสุดท้ายมักเป็นงบสะสม 6M/9M ซึ่งเทียบกับทั้งปีไม่ได้) · ตัวเงินล้านบาท"""
+    symbol = symbol.strip().upper()
+    rows = _get(f"/api/set/stock/{symbol}/company-highlight/financial-data", lang="th") or []
+    market = _get(f"/api/set/stock/{symbol}/highlight-data", lang="th") or {}
+    years = [r for r in rows if r.get("quarter") == "Q9"]
+    last = years[-1] if years else {}
+    prev = years[-2] if len(years) > 1 else {}
+    return {
+        "symbol": symbol,
+        "period": f"ทั้งปี {last['year']}" if last else None,
+        "fy_end": (last.get("endDate") or "")[:10],
+        "revenue_mb": _million(last.get("totalRevenue")),
+        "net_profit_mb": _million(last.get("netProfit")),
+        "revenue_yoy_pct": _growth(last.get("totalRevenue"), prev.get("totalRevenue")),
+        "net_profit_yoy_pct": _growth(last.get("netProfit"), prev.get("netProfit")),
+        "net_margin_pct": last.get("netProfitMargin"),
+        "roe_pct": last.get("roe"),
+        "de_ratio": last.get("deRatio"),
+        "market_cap_mb": round(market["marketCap"] / 1e6) if market.get("marketCap") else None,
+        "pe": market.get("peRatio"),
+        "pbv": market.get("pbRatio"),
+        "dividend_yield_pct": market.get("dividendYield"),
+        "as_of": (market.get("asOfDate") or "")[:10],
+    }
+
+
+def price_history(symbol, period="3M"):
+    """ราคาปิดรายวัน [{date: "YYYY-MM-DD", close, volume}] เรียงเก่าไปใหม่ · period: 1M 3M 6M 1Y"""
+    data = _get(f"/api/set/stock/{symbol.strip().upper()}/chart-quotation", period=period,
+                accumulated="false") or {}
+    return [{"date": q["localDatetime"][:10], "close": q["price"], "volume": q.get("volume")}
+            for q in data.get("quotations", []) if q.get("price") is not None]
 
 
 def _symbol(company):
@@ -75,18 +138,53 @@ def fetch(company, limit=20):
 
 # ---------- งบการเงิน ----------
 
-# ชื่อบัญชีในงบกำไรขาดทุนแบบย่อของ SET (จับจากชื่อ เพราะรหัสบัญชีต่างกันตามประเภทธุรกิจ)
-ACCOUNTS = {"revenue": "รวมรายได้", "ebitda": "EBITDA", "net_profit": "กำไร(ขาดทุน)สุทธิ", "eps": "กำไรต่อหุ้น"}
+# ชื่อบัญชีในงบแบบย่อของ SET (ตัดช่องว่างแล้ว) แบบงบต่างกันตามประเภทธุรกิจ: ทั่วไป ธนาคาร ประกันภัย
+# จับจากชื่อ เพราะรหัสบัญชีต่างกันตามแบบงบ · ค่าใน tuple = ชื่อที่ขึ้นต้นแบบนี้ (เรียงตามลำดับที่ลอง)
+ACCOUNTS = {
+    "revenue": ("รวมรายได้", "รายได้จากการประกันภัย"),
+    "ebitda": ("EBITDA",),
+    # ต้องเป็นกำไรส่วนของบริษัทใหญ่ ("กำไร(ขาดทุน)สุทธิจากเครื่องมือทางการเงิน..." ของธนาคารไม่ใช่กำไรสุทธิ)
+    "net_profit": ("กำไร(ขาดทุน)สุทธิ:ผู้ถือหุ้นบริษัทใหญ่", "การแบ่งปันกำไร(ขาดทุน)สุทธิ:ผู้ถือหุ้นบริษัทใหญ่"),
+    "eps": ("กำไรต่อหุ้น", "กำไร(ขาดทุน)ต่อหุ้น"),
+    # ธนาคาร
+    "nii": ("รายได้ดอกเบี้ยสุทธิ",),
+    "fee_income": ("รายได้ค่าธรรมเนียมและบริการสุทธิ",),
+    "credit_loss": ("(กลับรายการ)ผลขาดทุนด้านเครดิตที่คาดว่าจะเกิดขึ้น",),
+    "opex": ("ค่าใช้จ่ายในการดำเนินงานอื่น",),
+}
+# รายได้จากการดำเนินงานของธนาคาร = ผลรวมบรรทัดเหล่านี้ (งบธนาคารไม่มีบรรทัด "รวมรายได้")
+BANK_INCOME = ("รายได้ดอกเบี้ยสุทธิ", "รายได้ค่าธรรมเนียมและบริการสุทธิ", "รายได้จากเงินปันผล",
+               "กำไร(ขาดทุน)จากเงินลงทุน", "กำไร(ขาดทุน)สุทธิจากเครื่องมือทางการเงิน")
+# งบฐานะการเงินของธนาคาร
+# สินเชื่อใช้ยอดสุทธิหลังหักค่าเผื่อ (ยอดก่อนหักธนาคารส่วนใหญ่ไม่กรอกในงบย่อ)
+BALANCE = {"loans": ("เงินให้สินเชื่อลูกหนี้และดอกเบี้ยค้างรับ",), "deposits": ("เงินรับฝาก",), "total_assets": ("รวมสินทรัพย์",)}
+BANK_FORM = "ธุรกิจธนาคาร"
+MONTHS = {"Q1": 3, "Q2": 3, "Q3": 3, "Q4": 3, "6M": 6, "9M": 9, "Q9": 12}
+
+
+def _amount(a):
+    # หน่วยในงบคือพันบาท (divider 1000) แปลงเป็นล้านบาท ยกเว้น EPS ที่เป็นบาท
+    return a["amount"] * a["divider"] / 1e6 if a["divider"] != 1 else a["amount"]
+
+
+def _match(statement, accounts):
+    out = {}
+    lines = [(a["accountName"].replace(" ", "").lstrip("-"), a) for a in statement.get("accounts", [])
+             if a["amount"] is not None]
+    for key, prefixes in accounts.items():
+        for prefix in prefixes:
+            hit = next((a for name, a in lines if name.startswith(prefix)), None)
+            if hit:
+                out[key] = _amount(hit)
+                break
+    return out
 
 
 def _accounts(statement):
-    out = {}
-    for a in statement.get("accounts", []):
-        name = a["accountName"].replace(" ", "")
-        for key, prefix in ACCOUNTS.items():
-            if key not in out and name.startswith(prefix.replace(" ", "")) and a["amount"] is not None:
-                # หน่วยในงบคือพันบาท (divider 1000) แปลงเป็นล้านบาท ยกเว้น EPS ที่เป็นบาท
-                out[key] = a["amount"] * a["divider"] / 1e6 if a["divider"] != 1 else a["amount"]
+    out = _match(statement, ACCOUNTS)
+    if "revenue" not in out and "nii" in out:
+        out["revenue"] = sum(_amount(a) for a in statement.get("accounts", []) if a["amount"] is not None
+                             and a["accountName"].replace(" ", "").startswith(BANK_INCOME))
     return out
 
 
@@ -99,21 +197,49 @@ def _million(v):
     return round(v / 1000, 2) if v is not None else None  # financial-data เป็นพันบาท
 
 
-def financials(symbol):
-    """งบรวมของรอบล่าสุดเทียบช่วงเดียวกันปีก่อน + งบย้อนหลังรายปี + ข้อมูลตลาด (ตัวเงินเป็นล้านบาท)"""
-    symbol = symbol.strip().upper()
-    statements = []
+def _statements(symbol, account_type):
+    """งบรวมรายไตรมาส/สะสมของปีล่าสุดที่มี เรียงใหม่สุดก่อน (ปีนี้ + ปีก่อน)"""
+    out = []
     for year in (date.today().year, date.today().year - 1):  # ต้นปีอาจยังไม่มีงบของปีนี้
-        statements = [s for s in _get(f"/api/set/factsheet/{symbol}/financialstatement", language="th",
-                                      financialStatementType="Q", accountType="I", fiscalYear=year) or []
-                      if s.get("fsType") == "C"] or statements
-        if statements:
-            break
+        out += [s for s in _get(f"/api/set/factsheet/{symbol}/financialstatement", language="th",
+                                financialStatementType="Q", accountType=account_type, fiscalYear=year) or []
+                if s.get("fsType") == "C"]
+    return out
+
+
+def company_profile(symbol):
+    """หมวดธุรกิจและแบบงบของหุ้น (ใช้เลือกตัวชี้วัดให้ตรงประเภทธุรกิจ)"""
+    p = _get(f"/api/set/stock/{symbol.strip().upper()}/profile", lang="th") or {}
+    return {"name": p.get("name"), "industry": p.get("industryName"), "sector": p.get("sectorName"),
+            "account_form": p.get("accountForm")}
+
+
+def major_shareholders(symbol):
+    """ผู้ถือหุ้นใหญ่ 10 อันดับแรก [{name, pct}] ตามสมุดทะเบียนล่าสุด"""
+    data = _get(f"/api/set/stock/{symbol.strip().upper()}/shareholder", lang="th") or {}
+    return [{"name": " ".join(s["name"].split()), "pct": s.get("percentOfShare")}
+            for s in data.get("majorShareholders") or [] if not s.get("isThaiNVDR")]
+
+
+def financials(symbol):
+    """งบรวมของรอบล่าสุดเทียบช่วงเดียวกันปีก่อน + งบย้อนหลังรายปี + ข้อมูลตลาด (ตัวเงินเป็นล้านบาท)
+    ธนาคารมีตัวเลขเพิ่ม: รายได้ดอกเบี้ยสุทธิ ค่าธรรมเนียม ผลขาดทุนด้านเครดิต สินเชื่อ เงินฝาก"""
+    symbol = symbol.strip().upper()
+    statements = _statements(symbol, "I")
     if not statements:
         raise SourceSkipped(f"ไม่พบงบการเงินของ {symbol} บน SET")
     latest = statements[0]
     prev = next((s for s in statements[1:]
                  if s["quarter"] == latest["quarter"] and s["year"] == latest["year"] - 1), None)
+    prof = company_profile(symbol)
+
+    cur = {"period": _period(latest), "end_date": latest["endDate"][:10], "status": latest.get("status"),
+           "months": MONTHS.get(latest["quarter"]), "filed_url": latest.get("downloadUrl"), **_accounts(latest)}
+    if prof.get("account_form") == BANK_FORM:
+        bal = next((s for s in _statements(symbol, "B")
+                    if s["quarter"] == latest["quarter"] and s["year"] == latest["year"]), None)
+        if bal:
+            cur.update(_match(bal, BALANCE))
 
     history = [{
         "year": h["year"], "period": "ทั้งปี" if h["quarter"] == "Q9" else h["quarter"],
@@ -125,8 +251,8 @@ def financials(symbol):
     market = _get(f"/api/set/stock/{symbol}/highlight-data", lang="th") or {}
     return {
         "symbol": symbol,
-        "latest": {"period": _period(latest), "end_date": latest["endDate"][:10], "status": latest.get("status"),
-                   "filed_url": latest.get("downloadUrl"), **_accounts(latest)},
+        "profile": prof,
+        "latest": cur,
         "previous": ({"period": _period(prev), **_accounts(prev)} if prev else None),
         "history": history,
         "market": {"market_cap": round(market["marketCap"] / 1e6) if market.get("marketCap") else None,  # บาท

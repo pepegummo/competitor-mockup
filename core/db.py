@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -7,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("CC_DATA_DIR") or ROOT / "data")  # ตั้ง CC_DATA_DIR เพื่อทดสอบกับข้อมูลชุดอื่น
 DB_PATH = DATA_DIR / "app.db"
 
 SCHEMA = """
@@ -54,6 +55,45 @@ CREATE TABLE IF NOT EXISTS financials (
   fetched_at TEXT,
   data_json TEXT        -- ผลจาก set_api.financials() (เก็บไว้แสดงผลซ้ำได้โดยไม่ต้องดึงใหม่)
 );
+
+CREATE TABLE IF NOT EXISTS company_groups (
+  name TEXT PRIMARY KEY, -- ชื่อบริษัท/เครือตามที่ผู้ใช้กรอก
+  fetched_at TEXT,
+  data_json TEXT        -- ผลจาก group.find_groups() (บริษัทในเครือพร้อมหลักฐาน) ไม่ต้องถาม LLM ซ้ำ
+);
+
+CREATE TABLE IF NOT EXISTS watchlists (
+  id INTEGER PRIMARY KEY,
+  name TEXT,
+  created_at TEXT,
+  config_json TEXT      -- ชุดที่ต้องติดตาม: companies, self_name, mode, focus, groups, opts
+);
+
+CREATE TABLE IF NOT EXISTS runs (
+  id INTEGER PRIMARY KEY,
+  watch_id INTEGER,     -- NULL = ผู้ใช้กดวิเคราะห์เองในแอป
+  started_at TEXT,      -- เวลาที่รอบนี้วิเคราะห์เสร็จ
+  config_json TEXT,
+  snapshot_json TEXT,   -- ตัวเลขต่อบริษัท ณ รอบนี้ (ใช้เทียบกับรอบถัดไป)
+  changes_json TEXT,    -- สิ่งที่เปลี่ยนไปจากรอบก่อน (monitor.changes)
+  report_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS internal_metrics (
+  company TEXT,
+  metric TEXT,
+  value REAL,
+  unit TEXT,
+  period TEXT,
+  uploaded_at TEXT,
+  PRIMARY KEY (company, metric)  -- อัปโหลดซ้ำ = แทนค่าเดิม
+);
+
+CREATE TABLE IF NOT EXISTS market_cache (
+  key TEXT PRIMARY KEY,  -- "hl:MC" ตัวเลขสรุปของหุ้น (เทียบทั้งหมวด), "px:MC" ราคาปิดรายวัน
+  fetched_at TEXT,
+  data_json TEXT
+);
 """
 
 
@@ -78,7 +118,8 @@ def now():
 # คอลัมน์ที่เพิ่มทีหลัง: DB เก่าจะถูกเพิ่มคอลัมน์ให้อัตโนมัติ
 MIGRATIONS = {
     "companies": {"aliases": "TEXT", "play_app_id": "TEXT", "appstore_id": "TEXT", "set_symbol": "TEXT",
-                  "appstore_name": "TEXT", "play_name": "TEXT", "disabled_sources": "TEXT"},
+                  "appstore_name": "TEXT", "play_name": "TEXT", "disabled_sources": "TEXT",
+                  "business": "TEXT"},  # ธุรกิจหลัก (ให้ LLM แยกข่าวของบริษัทนี้ออกจากข่าวที่ชื่อซ้ำ)
     "documents": {"source_name": "TEXT", "content": "TEXT", "rating": "INTEGER"},
 }
 
@@ -195,6 +236,11 @@ def set_company_profile(name, set_symbol, aliases=None):
         )
 
 
+def set_company_business(name, business):
+    with connect() as conn:
+        conn.execute("UPDATE companies SET business = ? WHERE name = ?", (business, name))
+
+
 def save_financials(company_id, symbol, data):
     with connect() as conn:
         conn.execute(
@@ -216,6 +262,25 @@ def financials_by_company(company_ids):
                 WHERE f.company_id IN ({_in(company_ids)}) AND f.symbol = c.set_symbol""",
             company_ids).fetchall()
     return {r["name"]: {**json.loads(r["data_json"]), "fetched_at": r["fetched_at"]} for r in rows}
+
+
+def save_group(name, data):
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO company_groups (name, fetched_at, data_json) VALUES (?, ?, ?)
+               ON CONFLICT(name) DO UPDATE SET fetched_at = excluded.fetched_at, data_json = excluded.data_json""",
+            (name, now(), json.dumps(data, ensure_ascii=False)),
+        )
+
+
+def get_groups(names):
+    """{ชื่อ: ผลการหาบริษัทในเครือ} เฉพาะชื่อที่เคยหาแล้ว"""
+    if not names:
+        return {}
+    with connect() as conn:
+        rows = conn.execute(f"SELECT name, data_json FROM company_groups WHERE name IN ({_in(names)})",
+                            names).fetchall()
+    return {r["name"]: json.loads(r["data_json"]) for r in rows}
 
 
 def insert_fact(document_id, company_id, category, sentiment, summary, data_json=None):
@@ -256,11 +321,12 @@ def facts_df(company_ids):
             f"""SELECT c.name AS company, f.category, f.sentiment, f.summary,
                        d.title, d.url, d.published_at,
                        COALESCE(d.source_type, 'news') AS source_type,
-                       COALESCE(d.source_name, '') AS source_name, d.rating, d.content
+                       COALESCE(d.source_name, '') AS source_name, d.rating, d.content, d.fetched_at
                 FROM facts f
                 JOIN documents d ON d.id = f.document_id
                 JOIN companies c ON c.id = f.company_id
-                WHERE f.company_id IN ({_in(company_ids)})""",
+                WHERE f.company_id IN ({_in(company_ids)})
+                  AND f.category != 'irrelevant'  -- ข่าวที่ชื่อตรงแต่ไม่ใช่เรื่องของบริษัทนี้""",
             conn,
             params=company_ids,
         )
@@ -274,6 +340,23 @@ def count_rows(table):
 def company_names():
     with connect() as conn:
         return [r["name"] for r in conn.execute("SELECT name FROM companies ORDER BY name")]
+
+
+def analyzed_companies():
+    """[{name, set_symbol}] บริษัทที่เคยดึงข้อมูลได้จริง (ไม่รวมแถวว่าง) ใช้เป็นประวัติในช่องเลือกบริษัท
+    ถ้าหลายชื่อเป็นหุ้นตัวเดียวกัน (True / True Corporation / ทรู) เก็บชื่อที่มีข้อมูลมากสุด"""
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT c.name, c.set_symbol, COUNT(d.id) AS n FROM companies c
+               JOIN documents d ON d.company_id = c.id GROUP BY c.id ORDER BY n DESC""").fetchall()
+    out, symbols = [], set()
+    for r in rows:
+        if r["set_symbol"]:
+            if r["set_symbol"] in symbols:
+                continue
+            symbols.add(r["set_symbol"])
+        out.append({"name": r["name"], "set_symbol": r["set_symbol"] or ""})
+    return sorted(out, key=lambda r: r["name"].lower())
 
 
 def last_fetched_at(company_ids):
@@ -316,7 +399,119 @@ def latest_report(mode):
 
 def save_report(mode, content_md):
     with connect() as conn:
-        conn.execute(
+        return conn.execute(
             "INSERT INTO reports (mode, created_at, content_md) VALUES (?, ?, ?)",
             (mode, now(), content_md),
+        ).lastrowid
+
+
+# ---------- ติดตามอัตโนมัติ ----------
+
+def save_watchlist(name, config):
+    with connect() as conn:
+        return conn.execute("INSERT INTO watchlists (name, created_at, config_json) VALUES (?, ?, ?)",
+                            (name, now(), json.dumps(config, ensure_ascii=False))).lastrowid
+
+
+def watchlists():
+    """[{id, name, created_at, config, last_run}] last_run = รอบล่าสุดของชุดนี้ (หรือ None)"""
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM watchlists ORDER BY id").fetchall()
+        out = []
+        for r in rows:
+            last = conn.execute("SELECT id, started_at, changes_json FROM runs WHERE watch_id = ? "
+                                "ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
+            out.append({"id": r["id"], "name": r["name"], "created_at": r["created_at"],
+                        "config": json.loads(r["config_json"]),
+                        "last_run": {"id": last["id"], "started_at": last["started_at"],
+                                     "changes": json.loads(last["changes_json"] or "[]")} if last else None})
+    return out
+
+
+def delete_watchlist(watch_id):
+    with connect() as conn:
+        conn.execute("DELETE FROM watchlists WHERE id = ?", (watch_id,))
+
+
+def save_run(started_at, config, snapshot, changes, report_id, watch_id=None):
+    with connect() as conn:
+        return conn.execute(
+            """INSERT INTO runs (watch_id, started_at, config_json, snapshot_json, changes_json, report_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (watch_id, started_at, json.dumps(config, ensure_ascii=False),
+             json.dumps(snapshot, ensure_ascii=False), json.dumps(changes, ensure_ascii=False), report_id),
+        ).lastrowid
+
+
+def get_run(run_id):
+    with connect() as conn:
+        r = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+    if not r:
+        return None
+    return {"id": r["id"], "watch_id": r["watch_id"], "started_at": r["started_at"],
+            "config": json.loads(r["config_json"]), "changes": json.loads(r["changes_json"] or "[]"),
+            "report_id": r["report_id"]}
+
+
+def previous_snapshots(names):
+    """{บริษัท: (เวลาที่รอบนั้นเสร็จ, snapshot)} จากรอบล่าสุดที่มีบริษัทนั้น"""
+    out = {}
+    with connect() as conn:
+        rows = conn.execute("SELECT started_at, snapshot_json FROM runs ORDER BY id DESC LIMIT 500").fetchall()
+    for r in rows:
+        snap = json.loads(r["snapshot_json"] or "{}")
+        for name in names:
+            if name not in out and name in snap:
+                out[name] = (r["started_at"], snap[name])
+        if len(out) == len(names):
+            break
+    return out
+
+
+# ---------- ข้อมูลภายในที่ผู้ใช้อัปโหลด ----------
+
+def save_internal(rows):
+    """rows = [{company, metric, value, unit, period}] แทนค่าเดิมของ (บริษัท, ตัวชี้วัด) เดียวกัน"""
+    with connect() as conn:
+        conn.executemany(
+            """INSERT INTO internal_metrics (company, metric, value, unit, period, uploaded_at)
+               VALUES (:company, :metric, :value, :unit, :period, :uploaded_at)
+               ON CONFLICT(company, metric) DO UPDATE SET value = excluded.value, unit = excluded.unit,
+                 period = excluded.period, uploaded_at = excluded.uploaded_at""",
+            [{**r, "uploaded_at": now()} for r in rows],
         )
+
+
+def internal_metrics(names=None):
+    with connect() as conn:
+        if names is None:
+            return pd.read_sql_query("SELECT * FROM internal_metrics ORDER BY company, metric", conn)
+        if not names:
+            return pd.DataFrame()
+        return pd.read_sql_query(f"SELECT * FROM internal_metrics WHERE company IN ({_in(names)}) "
+                                 "ORDER BY company, metric", conn, params=list(names))
+
+
+def clear_internal():
+    with connect() as conn:
+        conn.execute("DELETE FROM internal_metrics")
+
+
+def get_cache(keys, max_age_hours=None):
+    """{key: data} จาก market_cache · max_age_hours = ข้ามรายการที่เก่ากว่านี้"""
+    if not keys:
+        return {}
+    with connect() as conn:
+        rows = conn.execute(f"SELECT * FROM market_cache WHERE key IN ({_in(keys)})", list(keys)).fetchall()
+    out = {}
+    for r in rows:
+        age = (datetime.now() - datetime.fromisoformat(r["fetched_at"])).total_seconds() / 3600
+        if max_age_hours is None or age <= max_age_hours:
+            out[r["key"]] = json.loads(r["data_json"])
+    return out
+
+
+def set_cache(key, data):
+    with connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO market_cache (key, fetched_at, data_json) VALUES (?, ?, ?)",
+                      (key, now(), json.dumps(data, ensure_ascii=False)))

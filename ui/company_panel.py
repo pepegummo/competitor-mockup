@@ -86,7 +86,9 @@ def _edit_form(row, version):
             st.rerun()
 
 
-def render(names, self_name, global_sources, advanced):
+def render(names, self_name, global_sources, advanced, members=None):
+    """members = {บริษัทในเครือ: {parent, relation}} แสดงป้ายว่าอยู่ในเครือไหน"""
+    members = members or {}
     if not names:
         return
     for n in names:  # การ์ดต้องมีแถวใน DB (สร้างแบบว่าง ๆ ไม่กระทบอย่างอื่น)
@@ -110,7 +112,9 @@ def render(names, self_name, global_sources, advanced):
         for start in range(0, len(rows), 3):
             for col, row in zip(st.columns(3), rows[start:start + 3]):
                 with col.container(border=True):
-                    st.markdown(f"**{row['name']}**" + ("  :blue-badge[บริษัทเรา]" if row["name"] == self_name else ""))
+                    parent = members.get(row["name"], {}).get("parent")
+                    st.markdown(f"**{row['name']}**" + ("  :blue-badge[บริษัทเรา]" if row["name"] == self_name else "")
+                                + (f"  :gray-badge[ในเครือ {parent}]" if parent else ""))
                     status = source_status(row)
                     for key in global_sources:
                         ok, text = status[key]
