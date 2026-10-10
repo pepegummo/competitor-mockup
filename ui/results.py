@@ -1,13 +1,14 @@
-"""หน้าผลลัพธ์: แถบตัวกรอง (กรองทุกกราฟ/ตาราง) → สิ่งที่ควรรู้ → การ์ดสรุปต่อบริษัท → แท็บ
-ส่วนย่อยของแท็บเจาะลึกและแท็บถามข้อมูลอยู่ใน ui/sections/"""
+"""หน้าผลลัพธ์ (อยู่ในหน้าภาพรวม): หัวผล + ปุ่ม (ตัวกรอง ติดตาม ดาวน์โหลด วิเคราะห์ใหม่) → สิ่งที่ควรรู้
+→ การ์ดสรุปต่อบริษัท → แท็บ สรุป / เรา vs คู่แข่ง / เจาะลึก / ข้อมูลทั้งหมด
+ลำดับตามหลัก overview first: สรุปก่อน ตัวกรองและรายละเอียดเปิดเมื่อต้องการ · ส่วนย่อยของแท็บเจาะลึกอยู่ใน ui/sections/"""
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import streamlit as st
 
 from core import analyze, benchmark, collect, db, export, impact
-from ui import charts, insights
-from ui.sections import ask as ask_tab, finance, market, news
+from ui import charts, insights, nav, watch_panel
+from ui.sections import finance, market, news
 from ui.sections.market import market_tables
 from ui.common import ago, fmt_time, friendly_errors
 from ui.labels import CATEGORY_TH, GAP_ITEM_TH, GAP_TYPE_TH, GLOSSARY, SENTIMENT_COLORS
@@ -23,21 +24,28 @@ def reset_filters():
 
 # ---------- ตัวกรอง ----------
 
+def active_filters():
+    """จำนวนตัวกรองที่ใช้อยู่ (ใช้ตั้งชื่อปุ่มก่อนสร้าง widget)"""
+    ss = st.session_state
+    return sum(bool(ss.get(k)) for k in ("flt_company", "flt_src", "flt_cat", "flt_sent", "flt_q")) + (
+        ss.get("flt_days") not in (None, "ทั้งหมด"))
+
+
 def filter_bar(res):
+    """ตัวกรองอยู่ใน popover ข้างหัวผล (เปิดเมื่อต้องการ) กรองทุกกราฟ/ตารางในหน้า"""
     df = res["df"]
-    with st.container(border=True):
-        c1, c2, c3 = st.columns([2, 2, 1.6])
-        companies = c1.multiselect("บริษัท", res["companies"], key="flt_company", placeholder="ทุกบริษัท")
-        sources = c2.multiselect("แหล่ง", [v for v in collect.SOURCE_TYPE_LABEL.values() if v in set(df["แหล่ง"])],
+    n = active_filters()
+    with st.popover(f"ตัวกรอง ({n})" if n else "ตัวกรอง", icon=":material/filter_alt:", width="stretch"):
+        companies = st.multiselect("บริษัท", res["companies"], key="flt_company", placeholder="ทุกบริษัท")
+        sources = st.multiselect("แหล่ง", [v for v in collect.SOURCE_TYPE_LABEL.values() if v in set(df["แหล่ง"])],
                                  key="flt_src", placeholder="ทุกแหล่ง")
-        period = c3.segmented_control("ช่วงเวลา", list(PERIODS), key="flt_days", default="ทั้งหมด")
-        c4, c5, c6, c7 = st.columns([3, 1.4, 1.8, 0.8], vertical_alignment="bottom")
-        cats = c4.pills("หมวด", [v for v in CATEGORY_TH.values() if v in set(df["หมวด"])],
+        period = st.segmented_control("ช่วงเวลา", list(PERIODS), key="flt_days", default="ทั้งหมด")
+        cats = st.pills("หมวด", [v for v in CATEGORY_TH.values() if v in set(df["หมวด"])],
                         selection_mode="multi", key="flt_cat")
-        sents = c5.pills("น้ำเสียง", list(SENTIMENT_COLORS), selection_mode="multi", key="flt_sent")
-        query = c6.text_input("ค้นหาคำ", key="flt_q", placeholder="เช่น 5G, กำไร")
-        c7.button("ล้าง", icon=":material/filter_alt_off:", on_click=reset_filters, width="stretch",
-                  help="ล้างตัวกรองทั้งหมด")
+        sents = st.pills("น้ำเสียง", list(SENTIMENT_COLORS), selection_mode="multi", key="flt_sent")
+        query = st.text_input("ค้นหาคำ", key="flt_q", placeholder="เช่น 5G, กำไร")
+        st.button("ล้างตัวกรอง", icon=":material/filter_alt_off:", on_click=reset_filters, width="stretch",
+                  key="flt_clear_pop")
     return {"companies": companies, "sources": sources, "days": PERIODS.get(period or "ทั้งหมด"),
             "period": period, "categories": cats or [], "sentiments": sents or [], "query": query.strip()}
 
@@ -174,7 +182,7 @@ def changes_box(res):
 
 
 def glossary():
-    with st.popover("คำศัพท์", icon=":material/help:"):
+    with st.popover("คำศัพท์", icon=":material/help:", width="stretch"):
         for term, text in GLOSSARY.items():
             st.markdown(f"**{term}** — {text}")
 
@@ -197,18 +205,7 @@ def tab_summary(res, v, f, active, scope, on_report):
                     rewrite_report(res, v, scope, on_report)
                     st.rerun()
         st.markdown(res["report"])
-        title = (f"{res['self_name']} vs " + ", ".join(c for c in res["companies"] if c != res["self_name"])
-                 if res["self_name"] else " · ".join(res["companies"]))
-        d1, d2 = st.columns(2)
-        d1.download_button("ดาวน์โหลด Word (.docx)",
-                           export.report_docx(res["report"], f"Competitor Compare: {title}",
-                                              f"เขียนเมื่อ {fmt_time(res['report_at'])} · ทุกตัวเลขมาจากข้อมูลที่ระบบดึงมา "
-                                              "ลิงก์ [n] เปิดแหล่งที่มาได้"),
-                           f"report_{res['report_id']}.docx",
-                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                           icon=":material/description:", on_click="ignore", width="stretch")
-        d2.download_button("Markdown (.md)", res["report"], "report.md", "text/markdown",
-                           icon=":material/download:", on_click="ignore", width="stretch")
+        nav.link("ask", "ถามเพิ่มเกี่ยวกับผลนี้", icon=":material/forum:")
     with right:
         st.markdown("##### น้ำเสียงข่าว")
         if v["b"].empty:
@@ -252,6 +249,19 @@ def key_points(res, v):
         st.caption("คิดจากข้อมูลโดยระบบ ไม่ใช่ LLM · รายละเอียดอยู่ในแท็บด้านล่าง")
 
 
+def highlights(res, v):
+    """สิ่งที่ควรรู้ + อะไรเปลี่ยนไป วางคู่กัน (มีอย่างเดียวก็เต็มความกว้าง)"""
+    if res.get("changes"):
+        left, right = st.columns(2, gap="medium")
+        with left:
+            key_points(res, v)
+        with right:
+            changes_box(res)
+    else:
+        key_points(res, v)
+        changes_box(res)
+
+
 def rewrite_report(res, v, scope, on_report):
     self_name = v["self_name"] if not v["gap"].empty else None
     mode = "phase1" if not self_name else ("phase3" if res["mode"] == "discover" else "phase2")
@@ -259,7 +269,7 @@ def rewrite_report(res, v, scope, on_report):
     analyze.write_report(v["a"], v["b"], v["c"], self_name=self_name, gap=v["gap"] if self_name else None,
                          mode=mode, reviews=v["reviews"], fin=v["fin"], scope=full_scope, groups=v["groups"],
                          changes=res.get("changes"),
-                         internal=v["internal"] if st.session_state.get("internal_llm", True) else None,
+                         internal=v["internal"] if st.session_state.get("internal_llm_on", True) else None,
                          **market_tables(v))
     on_report(db.latest_report(mode), scope)
 
@@ -333,18 +343,45 @@ def tab_data(v):
             "url": st.column_config.LinkColumn("ลิงก์", display_text="เปิด"),
         },
     )
-    csv = (df[["วันที่", "company", "แหล่ง", "source_name", "หมวด", "น้ำเสียง", "rating", "title", "summary", "url"]]
-           .rename(columns={"company": "บริษัท", "source_name": "ที่มา", "rating": "ดาว",
-                            "title": "หัวข้อ", "summary": "สรุป", "url": "ลิงก์"})
-           .to_csv(index=False).encode("utf-8-sig"))  # BOM ให้ Excel อ่านไทยได้
-    st.download_button("ดาวน์โหลดข้อมูลที่กรองแล้ว (.csv)", csv, "data.csv", "text/csv",
-                       icon=":material/table:", on_click="ignore")
 
 
 # ---------- ประกอบหน้า ----------
 
-def show(res, on_report):
-    head, gloss = st.columns([6, 1], vertical_alignment="center")
+def _csv(df):
+    return (df[["วันที่", "company", "แหล่ง", "source_name", "หมวด", "น้ำเสียง", "rating", "title", "summary", "url"]]
+            .rename(columns={"company": "บริษัท", "source_name": "ที่มา", "rating": "ดาว",
+                             "title": "หัวข้อ", "summary": "สรุป", "url": "ลิงก์"})
+            .to_csv(index=False).encode("utf-8-sig"))  # BOM ให้ Excel อ่านไทยได้
+
+
+def downloads(res, v, title):
+    with st.popover("ดาวน์โหลด", icon=":material/download:", width="stretch"):
+        st.download_button("รายงาน Word (.docx)",
+                           export.report_docx(res["report"], f"Competitor Compare: {title}",
+                                              f"เขียนเมื่อ {fmt_time(res['report_at'])} · ทุกตัวเลขมาจากข้อมูลที่ระบบดึงมา "
+                                              "ลิงก์ [n] เปิดแหล่งที่มาได้"),
+                           f"report_{res['report_id']}.docx",
+                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                           icon=":material/description:", on_click="ignore", width="stretch")
+        st.download_button("รายงาน Markdown (.md)", res["report"], "report.md", "text/markdown",
+                           icon=":material/article:", on_click="ignore", width="stretch")
+        st.download_button(f"ข้อมูลที่กรองแล้ว {len(v['df'])} รายการ (.csv)",
+                           _csv(v["df"]) if not v["df"].empty else b"", "data.csv", "text/csv",
+                           icon=":material/table:", on_click="ignore", width="stretch", disabled=v["df"].empty)
+
+
+def follow(res):
+    with st.popover("ติดตาม", icon=":material/notifications_active:", width="stretch"):
+        st.caption("บันทึกชุดนี้ ระบบจะดึงข้อมูลใหม่ตามเวลาที่ตั้ง แล้วบอกว่าอะไรเปลี่ยน")
+        watch_panel.save_form(res)
+        nav.link("watch", "ตั้งเวลาและแจ้งเตือน")
+
+
+def header(res):
+    """ชื่อชุด + ความสดของข้อมูล"""
+    top = [c for c in res["companies"] if c not in res.get("groups", {})]
+    title = (f"{res['self_name']} vs " + ", ".join(c for c in top if c != res["self_name"])
+             if res["self_name"] else " · ".join(top))
     fresh = []  # จำนวนต่อแหล่ง + ดึงล่าสุดเมื่อไร
     if not res["df"].empty:
         by_source = res["df"].groupby("แหล่ง")["fetched_at"].agg(["size", "max"])
@@ -355,30 +392,47 @@ def show(res, on_report):
     cost = res.get("llm")
     if cost:
         fresh.append(f"รอบนี้ใช้ LLM {cost['calls']} ครั้ง ({cost['seconds']:.0f} วินาที)")
-    head.caption(f"{' · '.join(res['companies'])} · " + " · ".join(fresh))
-    if res.get("focus_label"):
-        head.caption(f"วิเคราะห์เฉพาะเรื่อง: **{res['focus_label']}**")
-    with gloss:
-        glossary()
+    return title, fresh
 
-    f = filter_bar(res)
+
+def show(res, on_report):
+    title, fresh = header(res)
+    head, b1, b2, b3, b4, b5 = st.columns([4.6, 1.25, 1.2, 1.3, 1.45, 1.1], vertical_alignment="center")
+    head.markdown(f"## {title}")
+    with b1:
+        f = filter_bar(res)
     scope = describe(f)
     active = bool(scope)
     v = build_view(res, f)
+    with b2:
+        follow(res)
+    with b3:
+        downloads(res, v, title)
+    if b4.button("วิเคราะห์ใหม่", icon=":material/add_chart:", width="stretch"):
+        nav.go("new")
+    with b5:
+        glossary()
+    st.caption(" · ".join(fresh))
+    if res.get("focus_label"):
+        st.caption(f"วิเคราะห์เฉพาะเรื่อง: **{res['focus_label']}**")
+
     if active:
-        st.caption(f"กำลังกรอง: {scope} · เหลือ {len(v['df'])} จาก {len(res['df'])} รายการ")
+        c1, c2 = st.columns([6, 1], vertical_alignment="center")
+        c1.info(f"กำลังกรอง: {scope} · เหลือ {len(v['df'])} จาก {len(res['df'])} รายการ",
+                icon=":material/filter_alt:")
+        c2.button("ล้าง", icon=":material/filter_alt_off:", on_click=reset_filters, width="stretch",
+                  key="flt_clear")
     if v["df"].empty and v["fin"].empty and v["internal"].empty:
         st.warning("ไม่มีข้อมูลตามตัวกรองนี้ ลองขยายช่วงเวลาหรือกด “ล้าง”")
         return
 
-    key_points(res, v)
-    changes_box(res)
+    highlights(res, v)
     kpi_cards(v)
     has_gap = bool(v["self_name"]) and not v["gap"].empty
-    names = ["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["เจาะลึก", "ถามข้อมูล", "ข้อมูลทั้งหมด"]
+    names = ["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["เจาะลึก", "ข้อมูลทั้งหมด"]
     renders = ([lambda: tab_summary(res, v, f, active, scope, on_report)]
                + ([lambda: tab_gap(v)] if has_gap else [])
-               + [lambda: tab_deep(res, v), lambda: ask_tab.tab_ask(res), lambda: tab_data(v)])
+               + [lambda: tab_deep(res, v), lambda: tab_data(v)])
     for tab, render in zip(st.tabs(names), renders):
         with tab:
             render()

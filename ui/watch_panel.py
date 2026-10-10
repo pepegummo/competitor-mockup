@@ -39,7 +39,7 @@ def start_background(*args):
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _save_form(res):
+def save_form(res):
     top = [c for c in res["companies"] if c not in res.get("groups", {})]
     with st.form("watch_save", border=False):
         c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
@@ -126,17 +126,20 @@ def _log():
 
 
 def render(res, on_open):
-    """คืน True ถ้าผู้ใช้กดเปิดผลของรอบอื่น (หน้าต้อง rerun)"""
+    """คืน True ถ้าผู้ใช้กดเปิดผลของรอบอื่น (หน้าต้องเปลี่ยนไปภาพรวม)"""
+    st.caption("บันทึกชุดบริษัทที่วิเคราะห์ไว้ ระบบจะดึงข้อมูลใหม่ เทียบกับรอบก่อน "
+               "และบอกว่าอะไรเปลี่ยน (ทั้งในแอปและส่งแจ้งเตือน)")
+    if res:
+        with st.container(border=True):
+            st.markdown("**บันทึกผลที่เปิดอยู่เป็นชุดติดตาม**")
+            save_form(res)
     count = len(db.watchlists())
-    with st.expander(f"ติดตามอัตโนมัติ ({count} ชุด)" if count else "ติดตามอัตโนมัติ",
-                     icon=":material/notifications_active:", expanded=True):
-        st.caption("บันทึกชุดบริษัทที่วิเคราะห์ไว้ ระบบจะดึงข้อมูลใหม่ เทียบกับรอบก่อน "
-                   "และบอกว่าอะไรเปลี่ยน (ทั้งในแอปและส่งแจ้งเตือน)")
-        if res:
-            _save_form(res)
-        opened = _watch_list(on_open)
-        st.divider()
-        _schedule()
-        _alerts()
-        _log()
+    st.subheader(f"ชุดที่ติดตาม ({count})" if count else "ชุดที่ติดตาม", divider="gray")
+    if not count:
+        st.caption("ยังไม่มีชุดติดตาม วิเคราะห์ก่อน แล้วกด “ติดตามชุดนี้” ในหน้าภาพรวม หรือบันทึกด้านบน")
+    opened = _watch_list(on_open)
+    st.subheader("ตั้งเวลาและแจ้งเตือน", divider="gray")
+    _schedule()
+    _alerts()
+    _log()
     return opened

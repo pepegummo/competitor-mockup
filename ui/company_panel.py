@@ -97,35 +97,35 @@ def render(names, self_name, global_sources, advanced, members=None):
     rows = db.get_companies(names)
     missing_apps = sum(1 for r in rows if not r["appstore_id"] and not r["play_app_id"])
     title = "แหล่งข้อมูลของแต่ละบริษัท" + (f" · {missing_apps} บริษัทยังไม่ได้ตั้งค่าแอป" if missing_apps else "")
-    with st.expander(title, icon=":material/tune:", expanded=True):
-        c1, c2 = st.columns([1.4, 3])
-        if c1.button("หาชื่อเรียก ชื่อหุ้น และแอปอัตโนมัติ", icon=":material/auto_fix_high:",
-                     help="ใช้ LLM 1 ครั้ง + ค้น App Store/Google Play เติมเฉพาะช่องที่ยังว่าง"):
-            with friendly_errors(), st.spinner("กำลังค้นหา..."):
-                _autofill(names)
-                st.session_state.panel_v = st.session_state.get("panel_v", 0) + 1
-                st.rerun()
-        c2.caption("ตรวจชื่อแอปและชื่อหุ้นในการ์ดก่อนวิเคราะห์ ถ้าไม่ใช่ของบริษัทนั้นกด “แก้ไข” "
-                   + ("· ติ๊กออกเพื่อไม่ใช้แหล่งนั้นกับบริษัทนี้" if advanced else ""))
+    st.subheader(title, divider="gray")
+    c1, c2 = st.columns([1.4, 3])
+    if c1.button("หาชื่อเรียก ชื่อหุ้น และแอปอัตโนมัติ", icon=":material/auto_fix_high:",
+                 help="ใช้ LLM 1 ครั้ง + ค้น App Store/Google Play เติมเฉพาะช่องที่ยังว่าง"):
+        with friendly_errors(), st.spinner("กำลังค้นหา..."):
+            _autofill(names)
+            st.session_state.panel_v = st.session_state.get("panel_v", 0) + 1
+            st.rerun()
+    c2.caption("ตรวจชื่อแอปและชื่อหุ้นในการ์ดก่อนวิเคราะห์ ถ้าไม่ใช่ของบริษัทนั้นกด “แก้ไข” "
+               + ("· ติ๊กออกเพื่อไม่ใช้แหล่งนั้นกับบริษัทนี้" if advanced else ""))
 
-        version = st.session_state.get("panel_v", 0)
-        for start in range(0, len(rows), 3):
-            for col, row in zip(st.columns(3), rows[start:start + 3]):
-                with col.container(border=True):
-                    parent = members.get(row["name"], {}).get("parent")
-                    st.markdown(f"**{row['name']}**" + ("  :blue-badge[บริษัทเรา]" if row["name"] == self_name else "")
-                                + (f"  :gray-badge[ในเครือ {parent}]" if parent else ""))
-                    status = source_status(row)
-                    for key in global_sources:
-                        ok, text = status[key]
-                        label = f"{ALL_SOURCES[key]} :gray[· {text}]"
-                        on = ok and key not in row["disabled_sources"]
-                        if advanced:
-                            wkey = f"cs_{row['name']}_{key}_{version}"
-                            st.checkbox(label, value=on, disabled=not ok, key=wkey,
-                                        on_change=_toggle, args=(row["name"], key, wkey))
-                        else:
-                            icon = ":green[:material/check_circle:]" if on else ":gray[:material/remove_circle_outline:]"
-                            st.markdown(f"{icon} {label}")
-                    with st.popover("แก้ไข", icon=":material/edit:", width="stretch"):
-                        _edit_form(row, version)
+    version = st.session_state.get("panel_v", 0)
+    for start in range(0, len(rows), 3):
+        for col, row in zip(st.columns(3), rows[start:start + 3]):
+            with col.container(border=True):
+                parent = members.get(row["name"], {}).get("parent")
+                st.markdown(f"**{row['name']}**" + ("  :blue-badge[บริษัทเรา]" if row["name"] == self_name else "")
+                            + (f"  :gray-badge[ในเครือ {parent}]" if parent else ""))
+                status = source_status(row)
+                for key in global_sources:
+                    ok, text = status[key]
+                    label = f"{ALL_SOURCES[key]} :gray[· {text}]"
+                    on = ok and key not in row["disabled_sources"]
+                    if advanced:
+                        wkey = f"cs_{row['name']}_{key}_{version}"
+                        st.checkbox(label, value=on, disabled=not ok, key=wkey,
+                                    on_change=_toggle, args=(row["name"], key, wkey))
+                    else:
+                        icon = ":green[:material/check_circle:]" if on else ":gray[:material/remove_circle_outline:]"
+                        st.markdown(f"{icon} {label}")
+                with st.popover("แก้ไข", icon=":material/edit:", width="stretch"):
+                    _edit_form(row, version)

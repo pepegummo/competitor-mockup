@@ -58,7 +58,6 @@ def _recheck_section(names):
 
 
 def render(names):
-    with st.expander("ดูแลข้อมูล", icon=":material/cleaning_services:"):
-        _merge_section()
-        st.divider()
-        _recheck_section(names)
+    _merge_section()
+    st.divider()
+    _recheck_section(names)
