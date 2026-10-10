@@ -19,32 +19,20 @@ Mock-up นี้รันบนเครื่องตัวเอง ยั�
 
 ### 0.1 Stack ของ mock-up
 
+ภาพรวมระบบ แผนภาพ และแผนขึ้น cloud ดู [`architecture.md`](architecture.md)
+
 | ส่วน | ใช้ | เหตุผล |
 |---|---|---|
 | UI | Streamlit | ได้หน้าเว็บ + กราฟ + chat ในไฟล์ Python เดียว |
 | ดึงข้อมูล | `feedparser` (RSS), `requests` + `beautifulsoup4` | ไม่ต้องใช้ API key |
 | เก็บข้อมูล | SQLite + โฟลเดอร์ `data/raw/` | ไม่ต้องติดตั้ง server |
 | LLM | endpoint ของอาจารย์ (`qwen3.5`) | ตามโจทย์ |
+| ค้นด้วยความหมาย | `sentence-transformers` + `multilingual-e5-small` รันในเครื่อง | key ของอาจารย์ใช้โมเดล embedding ไม่ได้ |
 
 ### 0.2 โครงสร้างโฟลเดอร์
 
-```
-competitor-mockup/
-├── .env                # LLM_API_KEY=... (ห้าม commit)
-├── .gitignore          # ใส่ .env และ data/
-├── requirements.txt
-├── app.py              # Streamlit UI
-├── core/
-│   ├── llm.py          # เรียก LLM
-│   ├── db.py           # สร้างตาราง + query
-│   ├── collect.py      # ดึงข้อมูล
-│   ├── process.py      # classify + extract
-│   ├── analyze.py      # compare + เขียนรายงาน
-│   └── discover.py     # หาคู่แข่ง (Phase 3)
-└── data/
-    ├── raw/            # ไฟล์ดิบ
-    └── app.db
-```
+โครงสร้างตอนเริ่มคือ `app.py` + `core/` (`llm`, `db`, `collect`, `process`, `analyze`, `discover`) + `data/`
+ตอนนี้มีโมดูลเพิ่มอีกมาก รายการล่าสุดและหน้าที่ของแต่ละไฟล์ดูตาราง "ส่วนประกอบ" ใน [`architecture.md`](architecture.md)
 
 `requirements.txt`
 
@@ -61,7 +49,7 @@ python-dotenv
 
 - [ ] รัน curl ของอาจารย์ให้ได้ HTTP 200 และจดเวลาตอบ (`time_total`) ไว้
 - [ ] ดูรูปแบบ response ว่าเป็น `choices[0].message.content` หรือไม่ (path `/v1/chat/completions` บอกว่าน่าจะเป็นแบบ OpenAI แต่ต้องดูของจริง)
-- [ ] ถามอาจารย์เรื่อง rate limit ต่อกลุ่ม และมี `/v1/embeddings` ไหม (ใช้ตอนทำ chat)
+- [ ] ถามอาจารย์เรื่อง rate limit ต่อกลุ่ม · `/v1/embeddings` มีแต่ key ใช้ได้แค่ qwen3.5 (ไม่ใช่โมเดล embedding) ตอนนี้จึงรัน embedding ในเครื่องแทน (`core/embed.py`)
 
 `core/llm.py`
 
@@ -337,12 +325,15 @@ If you do not know this company, return [].
 
 | ใน mock-up | ตอนขึ้น cloud จะเปลี่ยนเป็น |
 |---|---|
-| กดปุ่มเพื่อรัน | timer รันอัตโนมัติรายวัน/รายสัปดาห์ |
-| วน loop เรียก LLM ทีละชุด | queue + worker ที่คุม rate limit |
-| `data/raw/` บนเครื่อง | object storage |
-| SQLite | managed relational database |
-| ข่าวอย่างเดียว | เพิ่มราคา รีวิว และงบการเงิน |
-| ยังไม่มี | chat (RAG) และ alert |
+| กดปุ่ม / Windows Task Scheduler (`monitor.py`) | scheduler ของ cloud รันรายวัน/รายสัปดาห์ |
+| งานเบื้องหลัง + thread ในเครื่อง | queue + worker ที่คุม rate limit |
+| `data/raw/` บนเครื่อง | object storage (OBS) |
+| SQLite | managed PostgreSQL |
+| embedding ใน SQLite + numpy | pgvector |
+| ยังไม่มี | OCR อ่าน PDF (ประกาศ SET, แบบ 56-1, ไฟล์อัปโหลด) |
+
+ที่เคยอยู่ในตารางนี้และทำแล้ว: ราคาหุ้น รีวิว งบการเงิน (ทำแล้ว) · chat แบบ RAG (แท็บถามข้อมูล + ค้นด้วยความหมาย) · alert (webhook)
+รายละเอียดดู [`huawei-cloud.md`](huawei-cloud.md)
 
 ## ลำดับที่แนะนำ
 
