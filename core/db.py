@@ -125,6 +125,13 @@ CREATE TABLE IF NOT EXISTS market_cache (
   fetched_at TEXT,
   data_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS embeddings (
+  hash TEXT PRIMARY KEY, -- sha256 ของ model + ชนิด (query/passage) + ข้อความ: ข้อความเดิมไม่ต้องคำนวณซ้ำ
+  model TEXT,
+  vec BLOB,              -- float32 ที่ normalize แล้ว (cosine = dot)
+  created_at TEXT
+);
 """
 
 
@@ -546,6 +553,27 @@ def set_cache(key, data):
     with connect() as conn:
         conn.execute("INSERT OR REPLACE INTO market_cache (key, fetched_at, data_json) VALUES (?, ?, ?)",
                       (key, now(), json.dumps(data, ensure_ascii=False)))
+
+
+# ---------- embeddings (ค้นด้วยความหมายในแท็บถามข้อมูล) ----------
+
+def get_embeddings(hashes):
+    """{hash: bytes} ของเวกเตอร์ที่เคยคำนวณแล้ว"""
+    out = {}
+    hashes = list(hashes)
+    with connect() as conn:
+        for i in range(0, len(hashes), 900):  # SQLite จำกัดจำนวน ? ต่อคำสั่ง
+            part = hashes[i:i + 900]
+            out.update({r["hash"]: r["vec"] for r in
+                        conn.execute(f"SELECT hash, vec FROM embeddings WHERE hash IN ({_in(part)})", part)})
+    return out
+
+
+def save_embeddings(vecs, model):
+    """vecs = {hash: bytes}"""
+    with connect() as conn:
+        conn.executemany("INSERT OR REPLACE INTO embeddings (hash, model, vec, created_at) VALUES (?, ?, ?, ?)",
+                         [(h, model, v, now()) for h, v in vecs.items()])
 
 
 # ---------- llm_log ----------

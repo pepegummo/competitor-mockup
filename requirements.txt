@@ -11,3 +11,4 @@ googlenewsdecoder
 selectolax<1.0  # googlenewsdecoder still uses the pre-1.0 selectolax API
 openpyxl
 python-docx
+sentence-transformers  # ค้นด้วยความหมายในแท็บถามข้อมูล (torch แบบ CPU: pip install torch --index-url https://download.pytorch.org/whl/cpu)

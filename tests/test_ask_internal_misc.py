@@ -58,3 +58,40 @@ def test_docx_has_clickable_citation():
     doc = Document(io.BytesIO(data))
     assert any(p.style.name == "List Bullet" for p in doc.paragraphs)
     assert "https://n/1" in [r.target_ref for r in doc.part.rels.values() if r.is_external]
+
+
+def test_semantic_match_without_keyword_hit():
+    sims = pd.Series([0.86, 0.80, 0.78, 0.78], index=DF.index)  # "บ้านเปิดใหม่" ≈ ข่าวโครงการใหม่
+    rows = ask.retrieve(DF, f(companies=["AP"], keywords=["บ้านเปิดใหม่"]), sims)
+    assert list(rows["title"]) == ["AP เปิดโครงการใหม่ 27 โครงการ"]
+    assert ask.retrieve(DF, f(companies=["AP"], keywords=["บ้านเปิดใหม่"])).empty  # ไม่มี sims = แบบเดิม
+
+
+def test_semantic_never_answers_unknown_brand_with_other_companies():
+    sims = pd.Series([0.9, 0.9, 0.9, 0.9], index=DF.index)
+    assert ask.retrieve(DF, f(categories=["promotion"], keywords=["Shopee"]), sims).empty
+
+
+def test_similarity_caches_and_falls_back(tmp_db, monkeypatch):
+    from core import embed
+    calls = []
+
+    def fake(texts, kind):
+        calls.append(len(texts))
+        return [[1.0, 0.0] if "โครงการ" in t or kind == "query" else [0.0, 1.0] for t in texts]
+
+    short = news([{"company": "AP", "title": "ห่วยแตก", "published": "2026-09-10T03:00:00Z"}])
+
+    monkeypatch.setattr(embed, "BACKEND", "local")
+    monkeypatch.setattr(embed, "_local", fake)
+    sims = embed.similarity("โครงการใหม่", DF)
+    assert sims.round(3).tolist() == [1.0, 0.0, 0.0, 0.0]
+    embed.similarity("โครงการใหม่", DF)
+    assert calls == [4, 1]  # รอบสองใช้เวกเตอร์ที่เก็บไว้ ไม่คำนวณซ้ำ
+    assert embed.similarity("โครงการใหม่", short).tolist() == [0.0]  # ข้อความสั้นเกินไม่นับ
+
+    def broken(texts, kind):
+        raise ImportError("no sentence_transformers")
+
+    monkeypatch.setattr(embed, "_local", broken)
+    assert embed.similarity("คำถามใหม่", DF) is None

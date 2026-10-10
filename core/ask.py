@@ -1,6 +1,7 @@
 """ถามข้อมูลที่ระบบเก็บไว้: ตอบจากข่าว/ประกาศ/รีวิว/งบที่ดึงมาแล้วเท่านั้น พร้อมเลข [n] ที่เป็นลิงก์ไปต้นทาง
 ต่างจากถาม LLM ตรง ๆ: ไม่ใช้ความรู้ของโมเดล ไม่มีข้อมูลก็ตอบว่าไม่มี และรู้ว่าแต่ละข้อมาจากไหน
-1) LLM แปลงคำถามเป็นตัวกรอง (บริษัท หมวด คำค้น ช่วงเวลา) → 2) pandas คัดรายการ → 3) LLM ตอบจากรายการที่คัดได้
+1) LLM แปลงคำถามเป็นตัวกรอง (บริษัท หมวด คำค้น ช่วงเวลา) → 2) pandas คัดรายการตามคำค้น + ความหมาย (embed.py)
+→ 3) LLM ตอบจากรายการที่คัดได้
 ถ้าคัดได้ 0 รายการและไม่มีตัวเลขที่เกี่ยว จะตอบว่าไม่พบข้อมูลโดยไม่เรียก LLM ขั้นที่ 3"""
 import json
 import os
@@ -9,10 +10,15 @@ from datetime import timedelta
 
 import pandas as pd
 
-from core import analyze, db, llm
+from core import analyze, db, embed, llm
 from core.process import CATEGORIES, SENTIMENTS
 
 MAX_ROWS = 30
+# ค้นด้วยความหมาย: multilingual-e5-small ให้ cosine ~0.8 กับแทบทุกข่าวไทย ค่าตายตัวจึงใช้ไม่ได้
+# ใช้ระยะห่างจากค่ากลางของชุดนั้นแทน (ทดสอบกับข่าว AIS/True/NT/3BB/DTAC 324 รายการ)
+SIM_MARGIN = 0.05  # ต้องสูงกว่าค่ากลาง (median) ของทุกรายการอย่างน้อยเท่านี้
+SIM_GAP = 0.03     # และห่างจากรายการที่ใกล้ที่สุดไม่เกินนี้
+SIM_WEIGHT = 3     # คะแนนรวม = คำค้นที่เจอ × 2 + หมวดตรง + SIM_WEIGHT × ความใกล้
 SOURCES = {"news": "ข่าว", "rss": "ข่าว", "website": "เว็บไซต์บริษัท", "set": "ประกาศ SET", "review": "รีวิวแอป"}
 
 PARSE_PROMPT = """Turn this question about competitors into search filters.
@@ -63,10 +69,8 @@ def parse(question, companies):
     }
 
 
-def retrieve(df, f):
-    """คัดรายการตามตัวกรอง เรียงตามจำนวนคำค้นที่เจอ แล้วตามความใหม่ (ไม่เกิน 30 รายการ)
-    คำค้นไม่เจอเลยแต่มีหมวด/น้ำเสียง → ใช้หมวด/น้ำเสียงแทน (LLM อาจสะกดคำค้นไม่ตรงข่าว)
-    ยกเว้นคำค้นเป็นชื่อแบรนด์ที่ไม่มีในระบบ (เช่น Shopee) และไม่ได้ระบุบริษัท → ตอบว่าไม่พบ ไม่เอาข่าวบริษัทอื่นมาตอบ"""
+def candidates(df, f):
+    """ตัวกรองแข็ง: ตัดข่าวไม่เกี่ยว แล้วกรองบริษัท ช่วงเวลา น้ำเสียง"""
     if df.empty:
         return df
     v = df[df["category"] != "irrelevant"] if "category" in df else df
@@ -79,23 +83,57 @@ def retrieve(df, f):
         v = v[v["published_dt"] >= anchor - timedelta(days=f["days"])]
     if f.get("sentiments"):
         v = v[v["sentiment"].isin(f["sentiments"])]
+    return v
+
+
+def _close(sim, base):
+    """รายการที่ความหมายใกล้คำถามพอ: สูงกว่าค่ากลางของข้อมูลทั้งหมด (base) ชัดเจน และใกล้เคียงรายการที่ใกล้ที่สุดในชุดนี้
+    (0 = ข้อความสั้นเกิน ไม่นับ) · ค่ากลางคิดจากทุกรายการ เพราะชุดที่กรองแล้วอาจเหลือไม่กี่รายการ"""
+    base = base[base > 0]
+    if base.empty or not (sim > 0).any():
+        return sim > 1
+    return (sim >= base.median() + SIM_MARGIN) & (sim >= sim.max() - SIM_GAP)
+
+
+def retrieve(df, f, sims=None):
+    """คัดรายการตามตัวกรอง เรียงตามจำนวนคำค้นที่เจอ แล้วตามความใหม่ (ไม่เกิน 30 รายการ)
+    คำค้นไม่เจอเลยแต่มีหมวด/น้ำเสียง → ใช้หมวด/น้ำเสียงแทน (LLM อาจสะกดคำค้นไม่ตรงข่าว)
+    ยกเว้นคำค้นเป็นชื่อแบรนด์ที่ไม่มีในระบบ (เช่น Shopee) และไม่ได้ระบุบริษัท → ตอบว่าไม่พบ ไม่เอาข่าวบริษัทอื่นมาตอบ
+    sims (จาก embed.similarity) = ความใกล้ของคำถามกับแต่ละรายการ: รายการที่ความหมายใกล้ผ่านได้แม้คำค้นไม่ตรง
+    (เช่น ถาม "เน็ตบ้าน" เจอข่าว "บรอดแบนด์") และได้คะแนนเพิ่ม · None = ใช้คำค้นอย่างเดียว"""
+    v = candidates(df, f)
+    if v.empty:
+        return v
+    sim = sims.reindex(v.index).fillna(0) if sims is not None else None
     by_category = v[v["category"].isin(f["categories"])] if f["categories"] else v
-    if f["keywords"] and not v.empty:
+    if f["keywords"]:
         # มีคำค้น: ต้องเจออย่างน้อย 1 คำ หมวดที่ตรงได้คะแนนเพิ่ม (ไม่ตัดทิ้ง เพราะหมวดที่ LLM จัดอาจไม่ตรงคำถาม)
         text = (v["title"].fillna("") + " " + v["summary"].fillna("") + " " + v["content"].fillna("")).str.lower()
         hits = sum(text.str.contains(k.lower(), regex=False).astype(int) for k in f["keywords"])
-        matched = v.assign(_score=hits * 2 + v["category"].isin(f["categories"]).astype(int))[hits > 0]
+        score = hits * 2 + v["category"].isin(f["categories"]).astype(int)
+        keep = hits > 0
         brand = not f["companies"] and any(re.search(r"[A-Z]", k) for k in f["keywords"])
+        if sim is not None:
+            score = score + SIM_WEIGHT * sim
+            if not brand or keep.any():  # แบรนด์ที่ไม่มีในระบบ: ห้ามเอาข่าวที่ "ความหมายคล้าย" ของบริษัทอื่นมาตอบ
+                keep |= _close(sim, sims)
+        matched = v.assign(_score=score)[keep]
         if not matched.empty or brand or not (f["categories"] or f.get("sentiments")):
             return matched.sort_values(["_score", "published_dt"], ascending=False).head(MAX_ROWS)
+    elif sim is not None and not (f["categories"] or f.get("sentiments")):
+        # คำถามไม่มีคำค้นและไม่ระบุหมวด: เรียงตามความหมายแทนความใหม่อย่างเดียว
+        close = v.assign(_score=SIM_WEIGHT * sim)[_close(sim, sims)]
+        return close.sort_values(["_score", "published_dt"], ascending=False).head(MAX_ROWS)
     return by_category.assign(_score=0).sort_values("published_dt", ascending=False).head(MAX_ROWS)
 
 
 def answer(question, df, companies, fin=None, sector=None, price=None):
-    """คืน {"answer": markdown (เลข [n] เป็นลิงก์), "filters", "used": จำนวนรายการ, "llm_calls"}"""
+    """คืน {"answer": markdown (เลข [n] เป็นลิงก์), "filters", "used": จำนวนรายการ,
+    "semantic": ค้นด้วยความหมายได้ไหม, "llm_calls"}"""
     calls = llm.call_count
     f = parse(question, companies)
-    rows = retrieve(df, f)
+    sims = embed.similarity(question, df[df["category"] != "irrelevant"] if "category" in df else df)
+    rows = retrieve(df, f, sims)
     refs = []
 
     def add_ref(title, url):
@@ -141,9 +179,10 @@ def answer(question, df, companies, fin=None, sector=None, price=None):
 
     if items.empty and not numbers:
         return {"answer": "ไม่พบข้อมูลในระบบที่ตรงกับคำถามนี้ ลองถามให้กว้างขึ้น หรือกดวิเคราะห์ใหม่เพื่อดึงข้อมูลล่าสุด",
-                "filters": f, "used": 0, "llm_calls": llm.call_count - calls}
+                "filters": f, "used": 0, "semantic": sims is not None, "llm_calls": llm.call_count - calls}
     text = llm.chat(ANSWER_PROMPT.format(question=question,
                                          items=items.to_markdown(index=False) if not items.empty else "(ไม่มี)",
                                          numbers=numbers)).strip()
     text = analyze.link_refs(analyze.CJK.sub("", text), refs)
-    return {"answer": text, "filters": f, "used": len(items), "llm_calls": llm.call_count - calls}
+    return {"answer": text, "filters": f, "used": len(items), "semantic": sims is not None,
+            "llm_calls": llm.call_count - calls}

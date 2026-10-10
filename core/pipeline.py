@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
-from core import analyze, benchmark, collect, db, impact, monitor, process, profile
+from core import analyze, benchmark, collect, db, embed, impact, monitor, process, profile
 from core.sources import SourceSkipped, set_api
 from ui.labels import CATEGORY_TH, FINANCIALS_KEY  # ไฟล์ข้อความล้วน ไม่มี streamlit
 
@@ -134,6 +134,9 @@ def run(companies, self_name=None, mode="compare", opts=None, focus=None, groups
         log(f"ข้าม {skipped} ชุดที่ LLM ตอบรูปแบบไม่ถูก กดวิเคราะห์อีกครั้งเพื่อลองใหม่")
 
     all_df = analyze.load_df(ids)
+    if not all_df.empty:
+        log("เตรียมค้นด้วยความหมายสำหรับแท็บถามข้อมูล", "status")
+        embed.warm(all_df[all_df["category"] != "irrelevant"])
     df, table_a, table_b, table_c = analyze.tables_from_df(analyze.apply_focus(all_df, focus))
     if focus_text:
         log(f"วิเคราะห์เฉพาะเรื่อง **{focus_text}**: {len(df)} รายการจาก {len(all_df)}")

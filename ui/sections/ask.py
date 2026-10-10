@@ -49,5 +49,6 @@ def tab_ask(res):
             if f["days"]:
                 scope.append(f"{f['days']} วันล่าสุด")
             st.caption(f"ใช้ {h['used']} รายการ · ค้นจาก: {' · '.join(scope)}"
+                       + (" · ค้นด้วยความหมาย + คำค้น" if h.get("semantic") else " · ค้นด้วยคำค้นอย่างเดียว")
                        + (" · รวมตัวเลขงบ/อันดับ/ราคาหุ้น" if f["needs_numbers"] else "")
                        + f" · LLM {h['llm_calls']} ครั้ง")
