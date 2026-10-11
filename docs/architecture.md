@@ -9,6 +9,29 @@
 (ระบบรัน `monitor.py --job` เบื้องหลัง หน้าเว็บไม่ค้าง) หรือรันตามเวลาจาก Windows Task Scheduler (`monitor.py`)
 ข้อมูลทั้งหมดอยู่ใน SQLite ไฟล์เดียว (`data/app.db`) LLM คือ `qwen3.5` ผ่าน endpoint ของอาจารย์ (`core/llm.py`)
 
+## เอกสารรายระบบ
+
+รายละเอียดของแต่ละระบบอยู่ใน [`systems/`](systems/) ทุกไฟล์มีหัวข้อเหมือนกัน:
+1. ภาพรวมพร้อมแผนภาพ (อ่านส่วนนี้พอถ้าต้องการแค่หลักการ)
+2. ขั้นตอน
+3. LLM
+4. ข้อมูลที่อ่าน/เขียน
+5. ค่าที่ปรับได้
+6. เมื่อมีปัญหา
+7. สำหรับนักพัฒนา (ฟังก์ชัน จุดที่ต้องแก้เมื่อเพิ่ม feature และเทส)
+
+| ระบบ | เอกสาร | โมดูลหลัก | LLM |
+|---|---|---|---|
+| ดึงข้อมูล | [`collect.md`](systems/collect.md) | `core/sources/*`, `collect`, `fulltext`, `profile` | 1 ครั้งต่อรอบ เฉพาะบริษัทที่ยังไม่เคยหาข้อมูล |
+| จัดหมวด + ตรวจความเกี่ยวข้อง + ตรวจความแม่น | [`classify.md`](systems/classify.md) | `process`, `accuracy` | 1 ครั้งต่อรายการใหม่ 5–10 รายการ |
+| วิเคราะห์ + รายงาน + งานเบื้องหลัง | [`analysis-report.md`](systems/analysis-report.md) | `pipeline`, `analyze`, `export`, `monitor.py --job` | 1 ครั้งต่อรายงาน |
+| ถามข้อมูล (RAG) | [`ask.md`](systems/ask.md) | `ask`, `embed` | 1–2 ครั้งต่อคำถาม |
+| ติดตามอัตโนมัติ + แจ้งเตือน | [`monitor.md`](systems/monitor.md) | `core/monitor`, `monitor.py`, `ui/watch_panel` | – (ใช้ของ pipeline) |
+| ข้อมูลตลาดหุ้น | [`market.md`](systems/market.md) | `set_api`, `benchmark`, `impact` | – |
+| หาคู่แข่ง + บริษัทในเครือ + รวมบริษัทซ้ำ | [`discover-groups.md`](systems/discover-groups.md) | `discover`, `group` | 3 ครั้งต่อการหาคู่แข่ง · 1 ครั้งต่อการหาบริษัทในเครือ |
+| ข้อมูลภายใน + PDF/OCR | [`internal-docs.md`](systems/internal-docs.md) | `internal`, `core/ocr`, `ocr/` | PDF: 1 ครั้งต่อ 5 ส่วน |
+| พื้นฐานร่วม | [`platform.md`](systems/platform.md) | `llm`, `db`, `ui/nav`, `ui/state`, โหมดเดโม, เทส | – |
+
 ## ตอนนี้ (mock-up)
 
 ### Tech stack
@@ -108,26 +131,28 @@ flowchart LR
 
 ### ส่วนประกอบ
 
-| โมดูล | หน้าที่ | LLM |
-|---|---|---|
-| `core/sources/*` | ดึงข้อมูลแต่ละแหล่ง คืนรูปแบบเดียวกัน (`fetch(company, limit)`) | – |
-| `core/collect.py`, `core/fulltext.py` | ดึง เก็บไฟล์ดิบ กันข้อมูลซ้ำด้วย hash · เปิดลิงก์อ่านเนื้อหาเต็ม (trafilatura) | – |
-| `core/profile.py` | ชื่อหุ้น SET ชื่อที่สื่อใช้ ธุรกิจหลักของแต่ละบริษัท | 1 ครั้งรวมทุกบริษัท |
-| `core/process.py` | ตรวจความเกี่ยวข้อง + จัดหมวด 7 หมวด + น้ำเสียง + สรุป 1 ประโยค (ชุดละ 5–10 รายการ ส่งพร้อมกัน 4 ชุด) | ✓ |
-| `core/accuracy.py` | วัดความแม่นจากข่าวที่ผู้ตรวจกด แล้วใช้เป็นตัวอย่างใน prompt ของ `process` | – |
-| `core/analyze.py` | ตาราง A/B/C/R/F/gap · เขียนรายงาน · แปลงเลขอ้างอิงเป็นลิงก์ | รายงาน 1 ครั้ง |
-| `core/benchmark.py` | อันดับในหมวดธุรกิจ SET ทั้งหมวด | – |
-| `core/impact.py` | ราคาหุ้นหลังข่าว หักผลตลาด | – |
-| `core/monitor.py` | snapshot ต่อรอบ เทียบรอบก่อน ส่งแจ้งเตือน | – |
-| `core/ask.py` | ถามข้อมูล (router → retrieve → answer) | 2 ครั้งต่อคำถาม |
-| `core/embed.py` | เวกเตอร์ความหมาย + cache · `EMBED_BACKEND=local` หรือ `api` | – (โมเดล embedding แยก) |
-| `core/discover.py`, `core/group.py` | หาคู่แข่ง (Phase 3) · หาบริษัทในเครือ แล้วตรวจกับผู้ถือหุ้นใหญ่ใน SET | ✓ |
-| `core/internal.py`, `core/export.py` | อ่าน CSV/Excel ข้อมูลภายใน · บันทึก PDF ที่อัปโหลดเป็นส่วน ๆ · ส่งออก Word | – |
-| `core/ocr.py`, `ocr/` | อ่าน PDF ทีละหน้า: ส่งไป container `ocr` (FastAPI `POST /extract`) หรืออ่านในแอปเมื่อไม่ตั้ง `OCR_URL` · ตัดเป็นส่วน | – |
-| `core/llm.py` | เรียก LLM + บันทึกทุก call ใน `llm_log` + replay | – |
-| `ui/nav.py`, `ui/pages/*` | เมนู (`st.navigation`) และหน้าต่าง ๆ: ภาพรวม · วิเคราะห์ใหม่ · ถามข้อมูล · ติดตาม · ข้อมูลภายใน · บริษัทและแหล่งข้อมูล · ตรวจความแม่น | – |
-| `ui/state.py` | ผลที่เปิดอยู่ · ค่าฟอร์มที่จำข้ามหน้า · เริ่มงานเบื้องหลังและติดตามความคืบหน้า (fragment ใน sidebar) | – |
-| `ui/results.py`, `ui/sections/*`, `ui/*_panel.py` | ส่วนประกอบของหน้า: ผลวิเคราะห์ ตัวกรอง กราฟ การ์ดบริษัท ฯลฯ | – |
+| โมดูล | หน้าที่ | LLM | เอกสาร |
+|---|---|---|---|
+| `core/sources/*` | ดึงข้อมูลแต่ละแหล่ง คืนรูปแบบเดียวกัน (`fetch(company, limit)`) | – | [collect](systems/collect.md) |
+| `core/collect.py`, `core/fulltext.py` | ดึง เก็บไฟล์ดิบ กันข้อมูลซ้ำด้วย hash · เปิดลิงก์อ่านเนื้อหาเต็ม (trafilatura) | – | [collect](systems/collect.md) |
+| `core/profile.py` | ชื่อหุ้น SET ชื่อที่สื่อใช้ ธุรกิจหลักของแต่ละบริษัท | 1 ครั้งรวมทุกบริษัท | [collect](systems/collect.md) |
+| `core/process.py` | ตรวจความเกี่ยวข้อง + จัดหมวด 7 หมวด + น้ำเสียง + สรุป 1 ประโยค (ชุดละ 5–10 รายการ ส่งพร้อมกัน 4 ชุด) | ✓ | [classify](systems/classify.md) |
+| `core/accuracy.py` | วัดความแม่นจากข่าวที่ผู้ตรวจกด แล้วใช้เป็นตัวอย่างใน prompt ของ `process` | – | [classify](systems/classify.md) |
+| `core/pipeline.py` | ลำดับขั้นการวิเคราะห์ ใช้ร่วมกันระหว่างแอปและ `monitor.py` | – | [analysis-report](systems/analysis-report.md) |
+| `core/analyze.py` | ตาราง A/B/C/R/F/gap · เขียนรายงาน · แปลงเลขอ้างอิงเป็นลิงก์ | รายงาน 1 ครั้ง | [analysis-report](systems/analysis-report.md) |
+| `core/benchmark.py` | อันดับในหมวดธุรกิจ SET ทั้งหมวด | – | [market](systems/market.md) |
+| `core/impact.py` | ราคาหุ้นหลังข่าว หักผลตลาด | – | [market](systems/market.md) |
+| `core/monitor.py` | snapshot ต่อรอบ เทียบรอบก่อน ส่งแจ้งเตือน | – | [monitor](systems/monitor.md) |
+| `core/ask.py` | ถามข้อมูล (router → retrieve → answer) | 1–2 ครั้งต่อคำถาม | [ask](systems/ask.md) |
+| `core/embed.py` | เวกเตอร์ความหมาย + cache · `EMBED_BACKEND=local` หรือ `api` | – (โมเดล embedding แยก) | [ask](systems/ask.md) |
+| `core/discover.py`, `core/group.py` | หาคู่แข่ง (Phase 3) · หาบริษัทในเครือ แล้วตรวจกับผู้ถือหุ้นใหญ่ใน SET | ✓ | [discover-groups](systems/discover-groups.md) |
+| `core/internal.py` | อ่าน CSV/Excel ข้อมูลภายใน · บันทึก PDF ที่อัปโหลดเป็นส่วน ๆ | – | [internal-docs](systems/internal-docs.md) |
+| `core/ocr.py`, `ocr/` | อ่าน PDF ทีละหน้า: ส่งไป container `ocr` (FastAPI `POST /extract`) หรืออ่านในแอปเมื่อไม่ตั้ง `OCR_URL` · ตัดเป็นส่วน | – | [internal-docs](systems/internal-docs.md) |
+| `core/export.py` | ส่งออกรายงาน Word | – | [analysis-report](systems/analysis-report.md) |
+| `core/llm.py`, `core/db.py` | เรียก LLM + บันทึกทุก call ใน `llm_log` + replay · SQLite | – | [platform](systems/platform.md) |
+| `ui/nav.py`, `ui/pages/*` | เมนู (`st.navigation`) และหน้าต่าง ๆ: ภาพรวม · วิเคราะห์ใหม่ · ถามข้อมูล · ติดตาม · ข้อมูลภายใน · บริษัทและแหล่งข้อมูล · ตรวจความแม่น | – | [platform](systems/platform.md) |
+| `ui/state.py` | ผลที่เปิดอยู่ · ค่าฟอร์มที่จำข้ามหน้า · เริ่มงานเบื้องหลังและติดตามความคืบหน้า (fragment ใน sidebar) | – | [platform](systems/platform.md) |
+| `ui/results.py`, `ui/sections/*`, `ui/*_panel.py` | ส่วนประกอบของหน้า: ผลวิเคราะห์ ตัวกรอง กราฟ การ์ดบริษัท ฯลฯ | – | ในแต่ละระบบ |
 
 ### ข้อมูล (SQLite `data/app.db`)
 

@@ -1,6 +1,6 @@
 # Competitor Compare — mock-up
 
-ขั้นตอนเต็มอยู่ใน [`docs/mockup-steps.md`](docs/mockup-steps.md) · ภาพรวมระบบอยู่ใน [`docs/architecture.md`](docs/architecture.md) · แผนขึ้น Huawei Cloud อยู่ใน [`docs/huawei-cloud.md`](docs/huawei-cloud.md)
+ขั้นตอนเต็มอยู่ใน [`docs/mockup-steps.md`](docs/mockup-steps.md) · ภาพรวมระบบอยู่ใน [`docs/architecture.md`](docs/architecture.md) (รายละเอียดรายระบบใน [`docs/systems/`](docs/systems/)) · แผนขึ้น Huawei Cloud อยู่ใน [`docs/huawei-cloud.md`](docs/huawei-cloud.md)
 
 ## ติดตั้ง (Windows / PowerShell)
 
