@@ -19,31 +19,14 @@ Mock-up นี้รันบนเครื่องตัวเอง ยั�
 
 ### 0.1 Stack ของ mock-up
 
-ภาพรวมระบบ แผนภาพ และแผนขึ้น cloud ดู [`architecture.md`](architecture.md)
-
-| ส่วน | ใช้ | เหตุผล |
-|---|---|---|
-| UI | Streamlit | ได้หน้าเว็บ + กราฟ + chat ในไฟล์ Python เดียว |
-| ดึงข้อมูล | `feedparser` (RSS), `requests` + `beautifulsoup4` | ไม่ต้องใช้ API key |
-| เก็บข้อมูล | SQLite + โฟลเดอร์ `data/raw/` | ไม่ต้องติดตั้ง server |
-| LLM | endpoint ของอาจารย์ (`qwen3.5`) | ตามโจทย์ |
-| ค้นด้วยความหมาย | `sentence-transformers` + `multilingual-e5-small` รันในเครื่อง | key ของอาจารย์ใช้โมเดล embedding ไม่ได้ |
+stack ทั้งหมดดูหัวข้อ [Tech stack ใน `architecture.md`](architecture.md#tech-stack) · ภาพรวมระบบ แผนภาพ และแผนขึ้น cloud อยู่ในไฟล์เดียวกัน
 
 ### 0.2 โครงสร้างโฟลเดอร์
 
 โครงสร้างตอนเริ่มคือ `app.py` + `core/` (`llm`, `db`, `collect`, `process`, `analyze`, `discover`) + `data/`
 ตอนนี้มีโมดูลเพิ่มอีกมาก รายการล่าสุดและหน้าที่ของแต่ละไฟล์ดูตาราง "ส่วนประกอบ" ใน [`architecture.md`](architecture.md)
 
-`requirements.txt`
-
-```
-streamlit
-requests
-feedparser
-beautifulsoup4
-pandas
-python-dotenv
-```
+รายการ library ล่าสุดดูไฟล์ [`requirements.txt`](../requirements.txt)
 
 ### 0.3 ทดสอบ LLM ก่อนทำอย่างอื่น
 

@@ -11,6 +11,27 @@
 
 ## ตอนนี้ (mock-up)
 
+### Tech stack
+
+| ส่วน | ใช้ | ทำอะไร | ไฟล์ |
+|---|---|---|---|
+| ภาษา | Python 3.14 (เครื่อง dev, `.venv`) · 3.12 ใน Docker image บน cloud | – | – |
+| UI | `streamlit` (`st.navigation`, fragment) · กราฟด้วย `altair` (มากับ streamlit) | หน้าเว็บ เมนู กราฟ ความคืบหน้าใน sidebar | `app.py`, `ui/`, `ui/charts.py` |
+| LLM | `qwen3.5` ผ่าน endpoint ของอาจารย์ (แบบ OpenAI `/v1/chat/completions`) เรียกด้วย `requests` · `python-dotenv` อ่าน `.env` | classify สรุป เขียนรายงาน ตอบคำถาม | `core/llm.py` |
+| ดึงข่าว RSS | `feedparser` | Google News + สำนักข่าวไทย | `core/sources/google_news.py`, `thai_rss.py` |
+| ดึงเว็บ | `requests` + `beautifulsoup4` | เว็บบริษัท เนื้อหาข่าว RSS API ภายในของ SET | `core/sources/website.py`, `thai_rss.py`, `set_api.py` |
+| รีวิวแอป | `google-play-scraper` · RSS รีวิวของ Apple | รีวิว Google Play / App Store | `core/sources/app_reviews.py` |
+| เนื้อหาเต็ม | `googlenewsdecoder` (ต้องใช้ `selectolax<1.0`) + `trafilatura` | ถอดลิงก์ Google News แล้วอ่านบทความ | `core/fulltext.py` |
+| คำนวณ | `pandas` · `tabulate` (ใช้กับ `to_markdown` ตอนส่งตารางให้ LLM) · `openpyxl` (อ่าน Excel) | ตารางทุกตัวเลข ข้อมูลภายใน | `core/analyze.py`, `core/internal.py` |
+| Embedding | `sentence-transformers` + `intfloat/multilingual-e5-small` · torch แบบ CPU · `numpy` (cosine) | ค้นด้วยความหมายในหน้าถามข้อมูล | `core/embed.py` |
+| ฐานข้อมูล | SQLite (`sqlite3` ในตัว Python) + ไฟล์ดิบ `data/raw/*.json` | เก็บทุกอย่าง ดูหัวข้อ "ข้อมูล" | `core/db.py` |
+| ส่งออก | `python-docx` | รายงาน Word | `core/export.py` |
+| งานเบื้องหลัง | `subprocess` (`monitor.py --job`) · Windows Task Scheduler (`schtasks`) · `ThreadPoolExecutor` | วิเคราะห์ไม่ให้หน้าเว็บค้าง · รันรายวัน · ดึง/classify พร้อมกัน | `ui/watch_panel.py`, `core/pipeline.py` |
+| แจ้งเตือน | webhook ผ่าน `requests` | Discord / Slack / Teams / Google Chat | `core/monitor.py` |
+| ทดสอบ | `pytest` (`requirements-dev.txt`) | unit test | `tests/` |
+
+`requirements.txt` ไม่ได้ pin เวอร์ชัน · torch ให้ลงแบบ CPU ก่อน: `pip install torch --index-url https://download.pytorch.org/whl/cpu`
+
 ### เส้นทางวิเคราะห์
 
 ```mermaid
@@ -134,10 +155,15 @@ flowchart LR
 
 แบบเต็ม (รายการ service, containers, ขั้นตอน deploy, สิ่งที่ต้องแก้ในโค้ด) อยู่ใน [`huawei-cloud.md`](huawei-cloud.md) สรุป:
 
-- ECS เครื่องเดียวใน AP-Bangkok รัน Docker Compose: `proxy` (Caddy HTTPS + รหัสผ่าน) · `web` (Streamlit)
-  · `worker` (รันรายวัน + หยิบงานจากตาราง `jobs`) · `ocr` (เตรียมไว้)
-- RDS for PostgreSQL + pgvector แทน SQLite · OBS เก็บไฟล์ · SWR เก็บ image · Cloud Eye เฝ้าดู
-- LLM ยังใช้ endpoint ของอาจารย์ · embedding e5 ฝังอยู่ใน image
+| ส่วน | ตอนนี้ | บน cloud |
+|---|---|---|
+| รันแอป | `streamlit run` บนเครื่อง | ECS เครื่องเดียวใน AP-Bangkok · Docker Compose: `proxy` (Caddy HTTPS + รหัสผ่าน) · `web` (Streamlit) · `ocr` (เตรียมไว้) |
+| งานเบื้องหลัง / ตั้งเวลา | `subprocess` + Windows Task Scheduler | container `worker` รันรายวัน + หยิบงานจากตาราง `jobs` |
+| ฐานข้อมูล | SQLite | RDS for PostgreSQL |
+| เวกเตอร์ | ตาราง `embeddings` + numpy | pgvector |
+| ไฟล์ดิบ | `data/raw/` | OBS |
+| image / เฝ้าดู | – | SWR · Cloud Eye |
+| LLM / embedding | endpoint ของอาจารย์ · e5 ในเครื่อง | ไม่เปลี่ยน (e5 ฝังอยู่ใน image) |
 
 ## ข้อจำกัดที่รู้
 
