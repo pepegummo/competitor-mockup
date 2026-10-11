@@ -120,9 +120,13 @@ GROUP_SECTION = """
 {g}"""
 
 
+NOT_NEWS = ("review", "document")
+
+
 def news_only(df):
-    """ข่าว + เว็บไซต์บริษัท (ไม่รวมรีวิว) ใช้กับตาราง A/B/C เพื่อไม่ให้รีวิวจำนวนมากกลบหมวดข่าว"""
-    return df[df["source_type"] != "review"] if not df.empty else df
+    """ข่าว + เว็บไซต์บริษัท ใช้กับตาราง A/B/C ไม่รวมรีวิว (จำนวนมากจะกลบหมวดข่าว)
+    และ PDF ที่อัปโหลด (มีแค่บางบริษัท ตัวเลขเปรียบเทียบจะเพี้ยน ใช้ในแท็บถามข้อมูลอย่างเดียว)"""
+    return df[~df["source_type"].isin(NOT_NEWS)] if not df.empty else df
 
 
 def review_table(df):
@@ -359,15 +363,23 @@ def link_refs(report, refs):
         out = []
         for n in numbers(m.group(1)):
             if 1 <= n <= len(refs):
-                out.append(f"[[{n}]]({refs[n - 1][1]})")
+                out.append(f"[[{n}]]({refs[n - 1][1]})" if _linkable(refs[n - 1][1]) else f"\\[{n}\\]")
                 used.append(n)
         return "".join(out) or m.group(0)
 
+    def entry(n):
+        title, url = re.sub(r"[][]", "", refs[n - 1][0])[:120], refs[n - 1][1]
+        return f"{n}. [{title}]({url})" if _linkable(url) else f"{n}. {title}"
+
     report = REF.sub(repl, TABLE_CITE.sub("", report))
     if used:
-        report += "\n\n---\n**แหล่งอ้างอิง**\n\n" + "\n".join(
-            f"{n}. [{re.sub(r'[][]', '', refs[n - 1][0])[:120]}]({refs[n - 1][1]})" for n in sorted(set(used)))
+        report += "\n\n---\n**แหล่งอ้างอิง**\n\n" + "\n".join(entry(n) for n in sorted(set(used)))
     return report
+
+
+def _linkable(url):
+    """PDF ที่อัปโหลด (upload://) ไม่มีหน้าเว็บให้เปิด แสดงเป็นชื่อไฟล์ + หน้าแทนลิงก์"""
+    return isinstance(url, str) and url.startswith("http")
 
 
 def write_report(table_a, table_b, table_c, self_name=None, gap=None, mode=None, reviews=None, fin=None,

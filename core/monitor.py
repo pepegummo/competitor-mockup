@@ -7,7 +7,7 @@ from datetime import timedelta
 import pandas as pd
 import requests
 
-from core import impact
+from core import analyze, impact
 
 WINDOW_DAYS = 30        # ตัวเลขใน snapshot คิดจากข่าว/รีวิวที่เผยแพร่ใน 30 วันล่าสุด
 MIN_NEWS = 5            # ข่าวน้อยกว่านี้ % น้ำเสียงแกว่งง่าย ไม่เตือน
@@ -31,7 +31,7 @@ def snapshot(df, fin, moves=None):
     for name in names:
         s = {}
         sub = recent[recent["company"] == name] if not recent.empty else recent
-        news = sub[sub["source_type"] != "review"] if not sub.empty else sub
+        news = analyze.news_only(sub)
         s["news_30d"] = len(news)
         if len(news):
             s["negative_pct_30d"] = _num((news["sentiment"] == "negative").mean() * 100)
@@ -70,7 +70,7 @@ def changes(companies, df, snap, previous, events=None):
         cur = snap.get(name, {})
         new = df[(df["company"] == name) & (df["fetched_at"] > since)] if not df.empty else df
         if not new.empty:
-            news = new[new["source_type"] != "review"].sort_values("published_dt", ascending=False)
+            news = analyze.news_only(new).sort_values("published_dt", ascending=False)
             sets = news[news["source_type"] == "set"]
             if not sets.empty:
                 add(name, "high", "set", f"แจ้งตลาดใหม่ {len(sets)} เรื่อง", _items(sets))

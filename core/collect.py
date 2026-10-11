@@ -18,7 +18,7 @@ SOURCES = {
     "set_news": (set_api, "ข่าวแจ้งตลาด SET"),
 }
 SOURCE_TYPE_LABEL = {"news": "Google News", "rss": "สำนักข่าวไทย", "review": "รีวิวแอป", "website": "เว็บไซต์บริษัท",
-                     "set": "ข่าวแจ้งตลาด SET"}
+                     "set": "ข่าวแจ้งตลาด SET", "document": "เอกสารที่อัปโหลด"}
 
 # คำค้นเพิ่มเมื่อผู้ใช้เลือกหมวดที่สนใจ (ข่าว/PR กว้างเกินจะค้นเพิ่ม)
 CATEGORY_QUERY = {"product_price": "แพ็กเกจ ราคา", "promotion": "โปรโมชัน", "financial": "ผลประกอบการ",

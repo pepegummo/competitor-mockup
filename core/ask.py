@@ -19,7 +19,8 @@ MAX_ROWS = 30
 SIM_MARGIN = 0.05  # ต้องสูงกว่าค่ากลาง (median) ของทุกรายการอย่างน้อยเท่านี้
 SIM_GAP = 0.03     # และห่างจากรายการที่ใกล้ที่สุดไม่เกินนี้
 SIM_WEIGHT = 3     # คะแนนรวม = คำค้นที่เจอ × 2 + หมวดตรง + SIM_WEIGHT × ความใกล้
-SOURCES = {"news": "ข่าว", "rss": "ข่าว", "website": "เว็บไซต์บริษัท", "set": "ประกาศ SET", "review": "รีวิวแอป"}
+SOURCES = {"news": "ข่าว", "rss": "ข่าว", "website": "เว็บไซต์บริษัท", "set": "ประกาศ SET", "review": "รีวิวแอป",
+           "document": "เอกสารที่อัปโหลด"}
 
 PARSE_PROMPT = """Turn this question about competitors into search filters.
 Companies in the system (answer with the main name before the brackets): {companies}

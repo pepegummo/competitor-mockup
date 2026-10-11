@@ -12,10 +12,12 @@ LLM_WORKERS = 4          # ชุดที่ส่ง LLM พร้อมกั
 BATCH_SIZE = 10          # หัวข้ออย่างเดียว
 BATCH_SIZE_CONTENT = 5   # มีเนื้อหา/รีวิว prompt ยาวขึ้น จึงส่งทีละน้อยลง
 CONTENT_CHARS = 600
-SOURCE_TAG = {"news": "news", "rss": "news", "website": "company website", "review": "app review"}
+SOURCE_TAG = {"news": "news", "rss": "news", "website": "company website", "review": "app review",
+              "document": "uploaded document"}
 
 PROMPT = """You are a business analyst. Classify each item about a company.
-Items are news headlines, company website pages, or customer app reviews (marked [app review]).
+Items are news headlines, company website pages, parts of documents the user uploaded, or customer app reviews
+(marked [app review]).
 
 Categories: product_price, promotion, news_pr, review, financial, hr, other
 Use category "review" for every [app review] item.
@@ -25,7 +27,7 @@ For app reviews, sentiment is how the reviewer feels about the company or its ap
 "relevant" (news items only): true if the item is really about this company — its business, products,
 people, results or stock. false if the name means something else (a street, a TV host, a news agency,
 another company with the same abbreviation) or the company is only one name in a list of many stocks
-with no news about it. Company website pages and app reviews are always relevant.
+with no news about it. Company website pages, uploaded documents and app reviews are always relevant.
 
 Return ONLY a JSON array, one object per item:
 [{{"id": <id>, "relevant": true, "category": "...", "sentiment": "...", "summary": "<สรุปภาษาไทย 1 ประโยค>"}}]

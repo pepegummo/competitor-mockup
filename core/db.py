@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS companies (
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY,
   company_id INTEGER REFERENCES companies(id),
-  source_type TEXT,     -- 'news' | 'website'
+  source_type TEXT,     -- 'news' | 'rss' | 'website' | 'set' | 'review' | 'document' (PDF ที่อัปโหลด)
   url TEXT,
   title TEXT,
   published_at TEXT,
@@ -533,6 +533,29 @@ def internal_metrics(names=None):
 def clear_internal():
     with connect() as conn:
         conn.execute("DELETE FROM internal_metrics")
+
+
+def uploaded_documents():
+    """PDF ที่อัปโหลดไว้ หนึ่งแถวต่อ (ไฟล์, บริษัท): source_name, company, parts, uploaded_at"""
+    with connect() as conn:
+        return pd.read_sql_query(
+            """SELECT d.source_name, c.name AS company, COUNT(*) AS parts, MAX(d.fetched_at) AS uploaded_at
+               FROM documents d JOIN companies c ON c.id = d.company_id
+               WHERE d.source_type = 'document' GROUP BY d.source_name, c.name ORDER BY uploaded_at DESC""", conn)
+
+
+def delete_uploaded(source_name, company):
+    """ลบ PDF ไฟล์นี้ของบริษัทนี้ พร้อมผลจัดหมวดและผลตรวจ คืนจำนวนส่วนที่ลบ"""
+    with connect() as conn:
+        ids = [r["id"] for r in conn.execute(
+            """SELECT d.id FROM documents d JOIN companies c ON c.id = d.company_id
+               WHERE d.source_type = 'document' AND d.source_name = ? AND c.name = ?""", (source_name, company))]
+        if ids:
+            conn.execute(f"DELETE FROM labels WHERE fact_id IN (SELECT id FROM facts WHERE document_id IN ({_in(ids)}))",
+                         ids)
+            conn.execute(f"DELETE FROM facts WHERE document_id IN ({_in(ids)})", ids)
+            conn.execute(f"DELETE FROM documents WHERE id IN ({_in(ids)})", ids)
+        return len(ids)
 
 
 def get_cache(keys, max_age_hours=None):

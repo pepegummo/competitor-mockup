@@ -65,7 +65,7 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 | `proxy` | `caddy:2` | HTTPS (Let's Encrypt อัตโนมัติ) + basic auth · ส่งต่อ websocket ของ Streamlit | 80, 443 ออกนอก |
 | `web` | `competitor-app` | `streamlit run app.py` | 8501 ภายในเท่านั้น |
 | `worker` | `competitor-app` | cron (supercronic) รัน `monitor.py` ทุกวัน · วนอ่านตาราง `jobs` ที่รออยู่แล้วรัน `monitor.py --job <id>` | – |
-| `ocr` (profile `ocr`) | `competitor-ocr` | รับ PDF คืนข้อความ: ดึงข้อความจาก PDF ก่อน OCR (Tesseract `tha+eng`) เฉพาะหน้าที่เป็นภาพ | 8000 ภายในเท่านั้น |
+| `ocr` (profile `ocr`) | `competitor-ocr` (build จาก `ocr/`) | `POST /extract` รับ PDF คืนข้อความทีละหน้า: ใช้ข้อความในไฟล์ก่อน OCR (Tesseract `tha+eng`) เฉพาะหน้าที่เป็นภาพหรือข้อความเพี้ยน | 8000 ภายในเท่านั้น |
 
 **image `competitor-app`:** `python:3.12-slim` + torch แบบ CPU + `requirements.txt` + โมเดล `intfloat/multilingual-e5-small`
 ดาวน์โหลดฝังไว้ตอน build (container ไม่ต้องโหลดโมเดลตอนเริ่ม และรันได้แม้ Hugging Face ล่ม) ขนาดราว 2–2.5 GB
@@ -80,6 +80,7 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 | `EMBED_BACKEND` | `local` |
 | `ALERT_WEBHOOK_URL` | ไม่บังคับ |
 | `MONITOR_AT` | เวลารันอัตโนมัติ เช่น `07:00` (เวลาไทย) |
+| `OCR_URL` | `http://ocr:8000` เมื่อเปิด profile `ocr` (เว้นว่าง = อ่านเฉพาะ PDF ที่มีข้อความในไฟล์) |
 | `BASIC_AUTH_USER`, `BASIC_AUTH_HASH` | รหัสเข้าเว็บของ Caddy (`caddy hash-password`) |
 
 ร่าง `docker-compose.yml` (ยังไม่ได้สร้างไฟล์จริง):
@@ -106,6 +107,9 @@ services:
   ocr:
     image: swr.ap-southeast-2.myhuaweicloud.com/<org>/competitor-ocr:<tag>
     profiles: ["ocr"]           # เปิดด้วย docker compose --profile ocr up -d
+    deploy:
+      resources:
+        limits: { cpus: "1.5", memory: 1.5g }   # OCR ใช้ CPU เต็มตอนมีไฟล์ จำกัดไว้ไม่ให้หน้าเว็บช้า
     restart: unless-stopped
 volumes:
   caddy_data:
@@ -122,7 +126,7 @@ volumes:
 | 5 | ใหม่ `worker.py` | วนทุก 5 วินาที: หยิบงาน `queued` (ใช้ `SELECT … FOR UPDATE SKIP LOCKED`) → รัน `pipeline.run` · ถึงเวลา `MONITOR_AT` → รันชุดติดตามทั้งหมดเหมือน `monitor.py` |
 | 6 | ใหม่ `Dockerfile`, `docker-compose.yml`, `Caddyfile`, `.dockerignore` | `.dockerignore` ต้องตัด `.env`, `data/`, `.venv/`, `.git/` |
 | 7 | ใหม่ สคริปต์ย้ายข้อมูล | copy `data/app.db` (และ `demo/app.db` ถ้าจะใช้โหมดเดโมบน cloud) → PostgreSQL ครั้งเดียว |
-| 8 | ใหม่ OCR (เมื่อจะทำ) | `ocr/` (FastAPI + pymupdf + Tesseract) และเรียกจาก `collect`/`internal` แบบเดียวกับ `fulltext` |
+| 8 | OCR | **ทำแล้ว** สำหรับ PDF ที่อัปโหลดในหน้าข้อมูลภายใน: `ocr/` (FastAPI + pymupdf + Tesseract) เรียกผ่าน `core/ocr.py` ตาม `OCR_URL` · ที่ยังไม่ทำ: ข่าวที่ลิงก์เป็น PDF และงบการเงินจาก SET |
 
 ตาราง `jobs` มี `status` อยู่แล้ว (`running` / `done` / `error`) จึงใช้เป็น queue ได้ แค่เพิ่มสถานะ `queued` ไม่ต้องใช้ DMS
 

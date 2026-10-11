@@ -1,14 +1,17 @@
-"""ข้อมูลภายในที่ผู้ใช้อัปโหลด (CSV / Excel) เช่น ยอดขาย ลูกค้าใหม่ NPS ส่วนแบ่งตลาด
-รับได้ 2 แบบ:
+"""ข้อมูลภายในที่ผู้ใช้อัปโหลด
+ตัวเลข (CSV / Excel) เช่น ยอดขาย ลูกค้าใหม่ NPS ส่วนแบ่งตลาด รับได้ 2 แบบ:
   แบบยาว: คอลัมน์ บริษัท, ตัวชี้วัด, ค่า (+ หน่วย, ช่วงเวลา ไม่บังคับ)
   แบบกว้าง: คอลัมน์แรกเป็นชื่อบริษัท คอลัมน์ที่เหลือเป็นตัวชี้วัด (ตัวเลข)
-เก็บไว้ใน data/app.db เครื่องนี้เท่านั้น แต่ตัวเลขจะถูกส่งให้ LLM ตอนเขียนรายงานถ้าเปิดใช้"""
+เก็บไว้ใน data/app.db เครื่องนี้เท่านั้น แต่ตัวเลขจะถูกส่งให้ LLM ตอนเขียนรายงานถ้าเปิดใช้
+เอกสาร PDF: อ่านข้อความ (OCR หน้าสแกน) แล้วเก็บเป็น documents ชนิด "document" ให้แท็บถามข้อมูลค้นได้"""
+import hashlib
 import io
 import re
+from datetime import date
 
 import pandas as pd
 
-from core import db
+from core import db, ocr
 
 COLUMNS = {
     "company": ("บริษัท", "ชื่อบริษัท", "company", "name"),
@@ -110,3 +113,26 @@ def match_companies(rows, known, self_name=None):
         else:
             unmatched.add(r["company"])
     return rows, sorted(unmatched)
+
+
+def save_pdf(company, name, data, first=1, last=None):
+    """อ่าน PDF แล้วบันทึกเป็นส่วนละ ~1,500 ตัวอักษรของบริษัท company (ยังไม่จัดหมวด)
+    คืน {company_id, parts, added, text, ocr, skipped} (จำนวนส่วนทั้งหมด/ที่เพิ่มใหม่ และจำนวนหน้าแยกตามวิธีอ่าน)"""
+    pages = ocr.extract(name, data, first, last)
+    sha = hashlib.sha256(data).hexdigest()
+    path = db.DATA_DIR / "uploads" / f"{sha}.pdf"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_bytes(data)
+    ids = db.company_ids([company])
+    company_id = ids[0] if ids else db.upsert_company(company)
+    span = f"{pages[0]['page']}-{pages[-1]['page']}" if pages else "0"
+    parts = ocr.chunks(pages)
+    added = 0
+    for i, c in enumerate(parts):
+        pages_label = f"หน้า {c['first']}" if c["first"] == c["last"] else f"หน้า {c['first']}–{c['last']}"
+        added += db.insert_document(
+            company_id, "document", f"upload://{sha[:12]}#page={c['first']}", f"{name} · {pages_label}",
+            date.today().isoformat(), f"{sha}:{span}:{i}", str(path), source_name=name, content=c["text"])
+    count = {m: sum(p["method"] == m for p in pages) for m in ("text", "ocr", "skipped")}
+    return {"company_id": company_id, "parts": len(parts), "added": added, **count}
