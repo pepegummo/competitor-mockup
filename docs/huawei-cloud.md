@@ -18,9 +18,9 @@ flowchart LR
             PROXY["proxy<br/>Caddy: HTTPS + basic auth"]
             WEB["web<br/>Streamlit app.py"]
             WORKER["worker<br/>cron รายวัน + หยิบงานจากตาราง jobs"]
-            OCR["ocr (เตรียมไว้)<br/>Tesseract tha + pymupdf"]
+            OCR["ocr<br/>Tesseract tha + pymupdf"]
             PROXY --> WEB
-            WORKER -.->|"PDF"| OCR
+            WEB -->|"PDF ที่อัปโหลด"| OCR
         end
         RDS[("RDS for PostgreSQL<br/>+ pgvector<br/>subnet ส่วนตัว")]
         WEB --> RDS
@@ -121,7 +121,7 @@ volumes:
 |---|---|---|
 | 1 | `core/db.py` | SQLite → PostgreSQL (psycopg): `?` → `%s` · `INSERT OR REPLACE` → `ON CONFLICT` · ตัด `PRAGMA` / `executescript` / `sqlite3.Row` · `INTEGER PRIMARY KEY` → `bigserial` · `MIGRATIONS` ใช้ `ADD COLUMN IF NOT EXISTS` · `CREATE EXTENSION vector` |
 | 2 | `core/embed.py`, `core/ask.py` | ตาราง `embeddings.vec` เป็น `vector(384)` · ค้นด้วย `ORDER BY vec <=> :q` (cosine) แทน numpy · โมเดลยังรันใน container |
-| 3 | `core/collect.py` | `RAW_DIR` / `raw_path` เขียนไป OBS (หรือ volume ก่อนในรอบแรก) |
+| 3 | `core/collect.py`, `core/internal.py` | `RAW_DIR` / `raw_path` และ PDF ต้นฉบับ (`data/uploads/`, `save_pdf`) เขียนไป OBS (หรือ volume ก่อนในรอบแรก) |
 | 4 | `ui/watch_panel.py`, `app.py` | ตัด `schtasks` (ใช้ได้แค่ Windows) และ `subprocess.Popen` · ปุ่ม "เริ่มวิเคราะห์"/"รันตอนนี้" แค่สร้างแถวใน `jobs` สถานะ `queued` ให้ worker หยิบ · เวลารันรายวันมาจาก `MONITOR_AT` |
 | 5 | ใหม่ `worker.py` | วนทุก 5 วินาที: หยิบงาน `queued` (ใช้ `SELECT … FOR UPDATE SKIP LOCKED`) → รัน `pipeline.run` · ถึงเวลา `MONITOR_AT` → รันชุดติดตามทั้งหมดเหมือน `monitor.py` |
 | 6 | ใหม่ `Dockerfile`, `docker-compose.yml`, `Caddyfile`, `.dockerignore` | `.dockerignore` ต้องตัด `.env`, `data/`, `.venv/`, `.git/` |
@@ -136,8 +136,9 @@ volumes:
 2. สร้าง RDS for PostgreSQL ใน subnet ส่วนตัว → `CREATE EXTENSION vector;` → สร้าง user/database ของแอป
 3. สร้าง OBS bucket ส่วนตัว
 4. สร้าง ECS + EIP → ลง Docker + compose plugin → เปิด Cloud Eye agent
-5. บนเครื่องเรา: `docker build` → `docker push` ไป SWR
-6. บน ECS: วาง `.env`, `docker-compose.yml`, `Caddyfile` → `docker compose up -d`
+5. บนเครื่องเรา: `docker build` 2 image (`competitor-app` จากโฟลเดอร์หลัก · `competitor-ocr` จาก `ocr/`) → `docker push` ไป SWR
+6. บน ECS: วาง `.env` (มี `OCR_URL=http://ocr:8000`), `docker-compose.yml`, `Caddyfile` → `docker compose --profile ocr up -d`
+   (ไม่ใช้ OCR: `docker compose up -d` และเว้น `OCR_URL` ว่าง)
 7. รันสคริปต์ย้ายข้อมูลจาก SQLite (ครั้งเดียว)
 8. ตั้ง DNS (หรือใช้ `<EIP>.sslip.io`) → เปิด `https://…` ใส่รหัส → กดวิเคราะห์ 1 รอบ และถาม 1 คำถาม
 

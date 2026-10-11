@@ -313,9 +313,9 @@ If you do not know this company, return [].
 | `data/raw/` บนเครื่อง | object storage (OBS) |
 | SQLite | managed PostgreSQL |
 | embedding ใน SQLite + numpy | pgvector |
-| ยังไม่มี | OCR อ่าน PDF (ประกาศ SET, แบบ 56-1, ไฟล์อัปโหลด) |
 
 ที่เคยอยู่ในตารางนี้และทำแล้ว: ราคาหุ้น รีวิว งบการเงิน (ทำแล้ว) · chat แบบ RAG (แท็บถามข้อมูล + ค้นด้วยความหมาย) · alert (webhook)
+· OCR สำหรับ PDF ที่อัปโหลด (container `ocr/`) ยังไม่ทำ: PDF แนบของประกาศ SET และแบบ 56-1 ที่ดึงอัตโนมัติ
 รายละเอียดดู [`huawei-cloud.md`](huawei-cloud.md)
 
 ## ลำดับที่แนะนำ

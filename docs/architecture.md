@@ -22,6 +22,7 @@
 | ดึงเว็บ | `requests` + `beautifulsoup4` | เว็บบริษัท เนื้อหาข่าว RSS API ภายในของ SET | `core/sources/website.py`, `thai_rss.py`, `set_api.py` |
 | รีวิวแอป | `google-play-scraper` · RSS รีวิวของ Apple | รีวิว Google Play / App Store | `core/sources/app_reviews.py` |
 | เนื้อหาเต็ม | `googlenewsdecoder` (ต้องใช้ `selectolax<1.0`) + `trafilatura` | ถอดลิงก์ Google News แล้วอ่านบทความ | `core/fulltext.py` |
+| PDF / OCR | `pymupdf` (ข้อความในไฟล์) + Tesseract `tha+eng` ผ่าน `pytesseract` ใน container `ocr/` (FastAPI) เรียกตาม `OCR_URL` | อ่าน PDF ที่อัปโหลด หน้าสแกนใช้ OCR | `core/ocr.py`, `ocr/` |
 | คำนวณ | `pandas` · `tabulate` (ใช้กับ `to_markdown` ตอนส่งตารางให้ LLM) · `openpyxl` (อ่าน Excel) | ตารางทุกตัวเลข ข้อมูลภายใน | `core/analyze.py`, `core/internal.py` |
 | Embedding | `sentence-transformers` + `intfloat/multilingual-e5-small` · torch แบบ CPU · `numpy` (cosine) | ค้นด้วยความหมายในหน้าถามข้อมูล | `core/embed.py` |
 | ฐานข้อมูล | SQLite (`sqlite3` ในตัว Python) + ไฟล์ดิบ `data/raw/*.json` | เก็บทุกอย่าง ดูหัวข้อ "ข้อมูล" | `core/db.py` |
@@ -47,6 +48,8 @@ flowchart LR
     SRC --> COL["collect.py<br/>+ fulltext.py ดึงเนื้อหาเต็ม"]
     COL --> RAW[("data/raw/*.json")]
     COL --> DOC[("documents")]
+    PDF["PDF ที่อัปโหลด<br/>หน้าข้อมูลภายใน"] --> OCRS["internal.save_pdf + ocr<br/>pymupdf → Tesseract หน้าสแกน"]
+    OCRS --> DOC
     DOC --> PROC["process.py · LLM<br/>ตรวจว่าเกี่ยวกับบริษัทจริงไหม<br/>จัดหมวด + น้ำเสียง + สรุป"]
     LAB[("labels<br/>ผู้ตรวจกดถูก/ผิด")] -.->|few-shot| PROC
     PROC --> FACT[("facts")]
@@ -62,6 +65,9 @@ flowchart LR
     CHG --> HOOK["Webhook<br/>Discord / Slack / Teams / Google Chat"]
 ```
 
+PDF ที่อัปโหลดเก็บใน `documents` ด้วย `source_type = 'document'` ผ่านการจัดหมวดเหมือนข่าว แต่ไม่เข้าตาราง A/B/C, gap
+และการเทียบรอบของ monitor (`analyze.news_only`) เพราะมีแค่บางบริษัท ใช้ในเส้นทางถามข้อมูลด้านล่างเท่านั้น
+
 ### เส้นทางถามข้อมูล (RAG)
 
 ```mermaid
@@ -74,7 +80,7 @@ flowchart LR
     E --> R
     R --> A["ask.answer · LLM<br/>ตอบจากรายการที่คัดได้เท่านั้น"]
     N["งบ · อันดับในหมวด · ราคาหุ้นหลังข่าว"] -.->|ถ้าถามเรื่องตัวเลข| A
-    A --> OUT["คำตอบ + ลิงก์ที่มา [n]"]
+    A --> OUT["คำตอบ + ที่มา [n]<br/>ลิงก์ หรือ ชื่อไฟล์ · หน้า (PDF)"]
 ```
 
 ไม่พบรายการเลยและไม่มีตัวเลขที่เกี่ยว → ตอบว่าไม่พบโดยไม่เรียก LLM ขั้นที่ 2
@@ -95,6 +101,7 @@ flowchart LR
 | งบการเงิน / ตลาด SET | งบล่าสุด + รายปี อัตราส่วน มูลค่าตลาด ราคาหุ้นรายวัน ตัวเลขทั้งหมวด | API ภายในตัวเดียวกัน · cache 1 วันใน `market_cache` | `set_api.py`, `benchmark.py`, `impact.py` |
 | ดึงเนื้อหาเต็ม (ตัวเลือก) | เนื้อหาบทความไม่เกิน 4,000 ตัวอักษร | ถอดลิงก์ Google News ด้วย `googlenewsdecoder` → อ่านบทความด้วย `trafilatura` | `core/fulltext.py` |
 | ข้อมูลภายใน (ผู้ใช้อัปโหลด) | ตัวเลข เช่น ยอดขาย NPS | CSV/Excel ทั้งแบบแถวยาวและแบบตาราง | `core/internal.py` |
+| เอกสาร PDF (ผู้ใช้อัปโหลด) | ข้อความทีละส่วน ~1,500 ตัวอักษร พร้อมเลขหน้า (ครั้งละไม่เกิน 30 หน้า) | `pymupdf` อ่านข้อความในไฟล์ → หน้าที่เป็นภาพหรือข้อความเพี้ยน (ฟอนต์ไทย map ผิด) ส่ง OCR ตาม `OCR_URL` | `core/internal.py`, `core/ocr.py`, `ocr/` |
 
 ทุกแหล่งคืนรูปแบบเดียวกัน (`core/sources/__init__.py` `item()`) → `collect.py` เก็บไฟล์ดิบ + กันซ้ำด้วย hash
 → `process.py` ส่ง LLM เฉพาะรายการใหม่ · ยังไม่มี: โซเชียลมีเดีย (Facebook, X, Pantip) และ PDF แนบของประกาศ SET
@@ -115,7 +122,8 @@ flowchart LR
 | `core/ask.py` | ถามข้อมูล (router → retrieve → answer) | 2 ครั้งต่อคำถาม |
 | `core/embed.py` | เวกเตอร์ความหมาย + cache · `EMBED_BACKEND=local` หรือ `api` | – (โมเดล embedding แยก) |
 | `core/discover.py`, `core/group.py` | หาคู่แข่ง (Phase 3) · หาบริษัทในเครือ แล้วตรวจกับผู้ถือหุ้นใหญ่ใน SET | ✓ |
-| `core/internal.py`, `core/export.py` | อ่าน CSV/Excel ข้อมูลภายใน · ส่งออก Word | – |
+| `core/internal.py`, `core/export.py` | อ่าน CSV/Excel ข้อมูลภายใน · บันทึก PDF ที่อัปโหลดเป็นส่วน ๆ · ส่งออก Word | – |
+| `core/ocr.py`, `ocr/` | อ่าน PDF ทีละหน้า: ส่งไป container `ocr` (FastAPI `POST /extract`) หรืออ่านในแอปเมื่อไม่ตั้ง `OCR_URL` · ตัดเป็นส่วน | – |
 | `core/llm.py` | เรียก LLM + บันทึกทุก call ใน `llm_log` + replay | – |
 | `ui/nav.py`, `ui/pages/*` | เมนู (`st.navigation`) และหน้าต่าง ๆ: ภาพรวม · วิเคราะห์ใหม่ · ถามข้อมูล · ติดตาม · ข้อมูลภายใน · บริษัทและแหล่งข้อมูล · ตรวจความแม่น | – |
 | `ui/state.py` | ผลที่เปิดอยู่ · ค่าฟอร์มที่จำข้ามหน้า · เริ่มงานเบื้องหลังและติดตามความคืบหน้า (fragment ใน sidebar) | – |
@@ -125,12 +133,12 @@ flowchart LR
 
 | กลุ่ม | ตาราง |
 |---|---|
-| ข้อมูลหลัก | `companies` · `documents` (ข่าว/ประกาศ/รีวิว + เนื้อหา) · `facts` (ผล LLM ต่อรายการ) · `financials` · `internal_metrics` · `company_groups` |
+| ข้อมูลหลัก | `companies` · `documents` (ข่าว/ประกาศ/รีวิว/PDF ที่อัปโหลด + เนื้อหา) · `facts` (ผล LLM ต่อรายการ) · `financials` · `internal_metrics` · `company_groups` |
 | ผลวิเคราะห์ / ติดตาม | `reports` · `runs` (snapshot + สิ่งที่เปลี่ยน) · `watchlists` · `jobs` (งานเบื้องหลัง) |
 | ตรวจคุณภาพ | `labels` |
 | cache / log | `llm_log` (prompt + คำตอบ ใช้ replay) · `market_cache` (ตัวเลขตลาด 1 วัน) · `embeddings` (เวกเตอร์ float32) |
 
-ไฟล์ดิบอยู่ที่ `data/raw/{company}/{date}_{แหล่ง}.json` · ชุดเดโมอยู่ใน `demo/` (ฐานข้อมูล + ผลรอบล่าสุด)
+ไฟล์ดิบอยู่ที่ `data/raw/{company}/{date}_{แหล่ง}.json` · PDF ต้นฉบับที่ `data/uploads/<sha256>.pdf` · ชุดเดโมอยู่ใน `demo/` (ฐานข้อมูล + ผลรอบล่าสุด)
 
 ### หลักการออกแบบ
 
@@ -145,7 +153,7 @@ flowchart LR
 
 | รายการ | สถานะ | ตอนนี้ทำอย่างไร |
 |---|---|---|
-| OCR (ไฟล์ PDF) | ❌ ยังไม่มี | ประกาศ SET เก็บแค่หัวข้อ · ข้อมูลภายในรับแค่ CSV/Excel |
+| OCR (ไฟล์ PDF) | ✅ มีแล้ว (PDF ที่อัปโหลด) | `ocr/` (pymupdf + Tesseract ไทย) · ค้นและอ้างอิงได้ในแท็บถาม · ยังไม่ทำ: PDF แนบของประกาศ SET และข่าวที่ลิงก์เป็น PDF |
 | Vector search | ✅ มีแล้ว (ขนาด mock-up) | `embed.py` + SQLite + numpy · ผสมกับคำค้น (hybrid) · บน cloud เปลี่ยนเป็น Postgres + pgvector |
 | LLM Router (จัดโดเมน) | ✅ มีแล้ว | `ask.parse` แยกบริษัท/หมวด/คำค้นของคำถาม · `process` จัดหมวดของข่าว |
 | LLM Detection + summarize | ✅ มีแล้ว | `process` ตัดข่าวที่ชื่อตรงแต่ไม่ใช่บริษัทนั้น + สรุป · `accuracy` วัดผลและป้อนตัวอย่างกลับ |
@@ -157,7 +165,7 @@ flowchart LR
 
 | ส่วน | ตอนนี้ | บน cloud |
 |---|---|---|
-| รันแอป | `streamlit run` บนเครื่อง | ECS เครื่องเดียวใน AP-Bangkok · Docker Compose: `proxy` (Caddy HTTPS + รหัสผ่าน) · `web` (Streamlit) · `ocr` (เตรียมไว้) |
+| รันแอป | `streamlit run` บนเครื่อง | ECS เครื่องเดียวใน AP-Bangkok · Docker Compose: `proxy` (Caddy HTTPS + รหัสผ่าน) · `web` (Streamlit) · `ocr` (`OCR_URL=http://ocr:8000`) |
 | งานเบื้องหลัง / ตั้งเวลา | `subprocess` + Windows Task Scheduler | container `worker` รันรายวัน + หยิบงานจากตาราง `jobs` |
 | ฐานข้อมูล | SQLite | RDS for PostgreSQL |
 | เวกเตอร์ | ตาราง `embeddings` + numpy | pgvector |
@@ -172,3 +180,5 @@ flowchart LR
 - โมเดล e5-small ยังไม่จับคำทับศัพท์ เช่น "ไฟว์จี" กับ "5G" (โมเดลใหญ่กว่าอย่าง `BAAI/bge-m3` อาจดีกว่า แต่หนัก ~2 GB)
 - คำถามเรื่องแบรนด์ที่ไม่มีในระบบ + คำทั่วไป (เช่น "Shopee ลดราคา") ยังดึงข่าวลดราคาของบริษัทอื่นมาให้ LLM
 - ข้อมูลไม่ real-time ดึงใหม่เมื่อกดวิเคราะห์หรือตามรอบที่ตั้งไว้
+- OCR ภาษาไทยของ Tesseract พลาดวรรณยุกต์/สระบนบางตัว (เช่น "เพิ่มขึ้น" → "เพิมขืน") และอ่านตารางหรือหลายคอลัมน์ในหน้าสแกนเรียงไม่ดี
+- PDF อ่านได้ครั้งละ 30 หน้า ไฟล์ยาว (เช่น 56-1) ต้องอัปโหลดซ้ำทีละช่วง
