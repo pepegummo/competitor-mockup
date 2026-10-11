@@ -30,6 +30,8 @@ flowchart TB
     end
 ```
 
+ดูแบบโต้ตอบ (archify): [discover.html](../diagrams/discover.html) · [corporate-groups.html](../diagrams/corporate-groups.html)
+
 ## หาคู่แข่ง (`discover.discover`)
 
 1. **ค้นข่าวของบริษัทเรา** 20 ข่าว (Google News) ถ้าไม่เจอเลยจะหยุดและบอกว่า "ไม่พบข่าวของ … เลย" (ชื่อที่ไม่มีจริงจึงไม่ได้รายชื่อที่แต่งขึ้น)

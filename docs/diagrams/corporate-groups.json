@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Corporate Group Members",
+    "output": "docs/diagrams/corporate-groups.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1100, 700],
+    "repository": {
+      "url": "https://github.com/pepegummo/competitor-mockup.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+    }
+  },
+  "lanes": [
+    { "id": "ui", "label": "Setup page" },
+    { "id": "logic", "label": "group.py" },
+    { "id": "llm", "label": "LLM" },
+    { "id": "set", "label": "SET API" }
+  ],
+  "phases": [
+    { "id": "ask", "label": "Ask", "fromCol": 0, "toCol": 2 },
+    { "id": "prove", "label": "Prove ownership", "fromCol": 3, "toCol": 4, "variant": "security" },
+    { "id": "pick", "label": "Pick", "fromCol": 5, "toCol": 5, "variant": "emphasis" }
+  ],
+  "mainPath": ["names", "detect", "ask", "symbol", "verify", "status", "tick", "register"],
+  "nodes": [
+    { "id": "names", "lane": "ui", "col": 0, "type": "frontend", "label": "Groups switch", "sublabel": "e.g. PTT, CP", "width": 128,
+      "sources": [{ "path": "ui/state.py", "line": 186, "end_line": 200 }] },
+    { "id": "detect", "lane": "logic", "col": 1, "type": "backend", "label": "New names only", "sublabel": "cached per name", "width": 128,
+      "sources": [{ "path": "ui/group_panel.py", "line": 15, "end_line": 26 }] },
+    { "id": "ask", "lane": "llm", "col": 2, "type": "external", "label": "List members", "sublabel": "max 8 · keywords", "width": 128,
+      "sources": [{ "path": "core/group.py", "line": 11, "end_line": 26 }, { "path": "core/group.py", "line": 64, "end_line": 72 }] },
+    { "id": "symbol", "lane": "set", "col": 2, "type": "cloud", "label": "Symbol exists?", "sublabel": "stock list", "width": 128,
+      "sources": [{ "path": "core/group.py", "line": 73, "end_line": 96 }] },
+    { "id": "verify", "lane": "set", "col": 3, "type": "cloud", "label": "Top 10 holders", "sublabel": "match keywords", "width": 128,
+      "sources": [{ "path": "core/group.py", "line": 47, "end_line": 61 }, { "path": "core/group.py", "line": 36, "end_line": 44 }] },
+    { "id": "status", "lane": "logic", "col": 4, "type": "security", "label": "Verified?", "sublabel": "yes · no · unknown", "width": 128,
+      "sources": [{ "path": "core/group.py", "line": 97, "end_line": 109 }] },
+    { "id": "tick", "lane": "ui", "col": 4, "type": "frontend", "label": "Pre-tick", "sublabel": "verified only", "width": 128,
+      "sources": [{ "path": "ui/group_panel.py", "line": 47, "end_line": 54 }] },
+    { "id": "register", "lane": "logic", "col": 5, "type": "backend", "label": "Register", "sublabel": "origin = group", "width": 128,
+      "sources": [{ "path": "ui/group_panel.py", "line": 57, "end_line": 66 }, { "path": "ui/state.py", "line": 241, "end_line": 242 }] }
+  ],
+  "edges": [
+    { "id": "e-names", "from": "names", "to": "detect", "label": "names" },
+    { "id": "e-ask", "from": "detect", "to": "ask", "label": "1 call", "variant": "emphasis" },
+    { "id": "e-sym", "from": "ask", "to": "symbol", "label": "members", "variant": "emphasis" },
+    { "id": "e-holders", "from": "symbol", "to": "verify", "label": "listed", "variant": "emphasis" },
+    { "id": "e-status", "from": "verify", "to": "status", "label": "match?", "variant": "security" },
+    { "id": "e-tick", "from": "status", "to": "tick", "label": "badge", "variant": "emphasis" },
+    { "id": "e-reg", "from": "tick", "to": "register", "label": "max 20", "variant": "emphasis" }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Ownership proof",
+      "items": [
+        "A member counts as verified only if a top-10 holder matches the group keywords",
+        "Unlisted members cannot be checked and are left for the user to tick",
+        "The parent itself and duplicates of chosen companies are dropped"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "In the analysis",
+      "items": [
+        "Members are analyzed as separate companies",
+        "They are never counted as competitors in the gap table",
+        "The report gets the group structure to explain them"
+      ]
+    }
+  ]
+}

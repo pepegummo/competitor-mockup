@@ -21,6 +21,8 @@ flowchart LR
     FB -->|ไม่| ERR["error → friendly_errors"]
 ```
 
+ดูแบบโต้ตอบ (archify): [llm-call.html](../diagrams/llm-call.html)
+
 ## LLM (`core/llm.py`)
 
 - **endpoint:** `https://llm.nattee.net/v1/chat/completions` (แบบ OpenAI) โมเดล `qwen3.5` ปิดโหมดคิด (`enable_thinking: False`) timeout 120 วินาที

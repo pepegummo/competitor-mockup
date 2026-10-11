@@ -36,6 +36,8 @@ flowchart LR
     CE -.->|"เฝ้าดู"| RDS
 ```
 
+ดูแบบโต้ตอบ (archify): [huawei-cloud.html](diagrams/huawei-cloud.html)
+
 ทุกอย่างวิ่งออกเน็ตผ่าน EIP ของ ECS (เรียก LLM ดึงข่าว ส่งแจ้งเตือน) จึงไม่ต้องใช้ NAT Gateway
 RDS ไม่มี IP สาธารณะ รับการเชื่อมต่อจาก ECS เท่านั้น
 

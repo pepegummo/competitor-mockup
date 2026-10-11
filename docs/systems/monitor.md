@@ -22,6 +22,8 @@ flowchart LR
     SAVE --> UI["แอป: อะไรเปลี่ยนไป · แนวโน้ม"]
 ```
 
+ดูแบบโต้ตอบ (archify): [monitor.html](../diagrams/monitor.html)
+
 ## ขั้นตอน
 
 1. **บันทึกชุด** (หน้า "ติดตามอัตโนมัติ" หรือปุ่ม "ติดตาม" บนหน้าผล, `watch_panel.save_form`):

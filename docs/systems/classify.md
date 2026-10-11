@@ -27,6 +27,8 @@ flowchart LR
     ACC --> LAB
 ```
 
+ดูแบบโต้ตอบ (archify): [classify.html](../diagrams/classify.html)
+
 ## ขั้นตอน (`process.classify_pending`)
 
 1. ดึง `documents` ที่ยังไม่มีใน `facts` ของบริษัทที่วิเคราะห์ (`db.unprocessed_documents`)

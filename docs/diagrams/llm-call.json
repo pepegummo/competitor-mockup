@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Lifecycle of One LLM Call",
+    "output": "docs/diagrams/llm-call.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/pepegummo/competitor-mockup.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+    }
+  },
+  "lanes": [
+    { "id": "main", "label": "Call path" },
+    { "id": "waiting", "label": "Retry wait" },
+    { "id": "recovery", "label": "Fallback" },
+    { "id": "terminal", "label": "Results" }
+  ],
+  "states": [
+    { "id": "requested", "type": "start", "label": "chat(prompt)", "sublabel": "hash of prompt", "lane": "main", "col": 0, "step": "01",
+      "sources": [{ "path": "core/llm.py", "line": 28, "end_line": 35 }] },
+    { "id": "replay", "type": "decision", "label": "Replay mode?", "sublabel": "LLM_REPLAY=1", "lane": "main", "col": 1, "step": "02",
+      "sources": [{ "path": "core/llm.py", "line": 22, "end_line": 25 }, { "path": "core/llm.py", "line": 36, "end_line": 40 }] },
+    { "id": "calling", "type": "active", "label": "POST endpoint", "sublabel": "qwen3.5 · 120 s", "lane": "main", "col": 2, "step": "03",
+      "sources": [{ "path": "core/llm.py", "line": 41, "end_line": 55 }] },
+    { "id": "logging", "type": "active", "label": "Log call", "sublabel": "prompt · answer · ms", "lane": "main", "col": 3, "step": "04",
+      "sources": [{ "path": "core/llm.py", "line": 56, "end_line": 58 }, { "path": "core/db.py", "line": 604, "end_line": 607 }] },
+    { "id": "answered", "type": "success", "label": "Answer", "sublabel": "fresh text", "lane": "main", "col": 4, "step": "05",
+      "sources": [{ "path": "core/llm.py", "line": 58 }] },
+    { "id": "backoff", "type": "waiting", "label": "Back off", "sublabel": "1 s, then 2 s", "lane": "waiting", "col": 2,
+      "sources": [{ "path": "core/llm.py", "line": 59, "end_line": 66 }] },
+    { "id": "fallback", "type": "decision", "label": "Logged before?", "sublabel": "same prompt hash", "lane": "recovery", "col": 3,
+      "sources": [{ "path": "core/llm.py", "line": 60, "end_line": 64 }, { "path": "core/db.py", "line": 610, "end_line": 614 }] },
+    { "id": "replayed", "type": "success", "label": "Replayed", "sublabel": "no network call", "lane": "terminal", "col": 1,
+      "sources": [{ "path": "core/llm.py", "line": 37, "end_line": 40 }] },
+    { "id": "cached", "type": "success", "label": "Old answer", "sublabel": "LLM was down", "lane": "terminal", "col": 3,
+      "sources": [{ "path": "core/llm.py", "line": 61, "end_line": 64 }] },
+    { "id": "error", "type": "failure", "label": "Error", "sublabel": "friendly message", "lane": "terminal", "col": 4,
+      "sources": [{ "path": "core/llm.py", "line": 65 }, { "path": "ui/common.py", "line": 25, "end_line": 32 }] }
+  ],
+  "transitions": [
+    { "from": "requested", "to": "replay" },
+    { "from": "replay", "to": "calling", "label": "miss" },
+    { "from": "calling", "to": "logging", "label": "200" },
+    { "from": "logging", "to": "answered" },
+    { "from": "replay", "to": "replayed", "label": "hit", "variant": "emphasis" },
+    { "from": "calling", "to": "backoff", "label": "error", "variant": "dashed" },
+    { "from": "backoff", "to": "calling", "label": "retry", "variant": "dashed" },
+    { "from": "calling", "to": "fallback", "label": "3rd fail", "variant": "security" },
+    { "from": "fallback", "to": "cached", "label": "yes" },
+    { "from": "fallback", "to": "error", "label": "no", "variant": "security" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Why log every call",
+      "items": [
+        "Run cost: calls and seconds per run come from llm_log",
+        "Demo mode answers known prompts without network",
+        "A down endpoint can still answer a prompt asked before"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "After the answer",
+      "items": [
+        "chat_json strips ``` fences, then json.loads",
+        "Each caller validates the structure itself",
+        "Chinese characters are stripped wherever text is shown"
+      ]
+    }
+  ]
+}

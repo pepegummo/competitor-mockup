@@ -88,6 +88,8 @@ flowchart LR
     CHG --> HOOK["Webhook<br/>Discord / Slack / Teams / Google Chat"]
 ```
 
+ดูแบบโต้ตอบ (archify): [analysis-pipeline.html](diagrams/analysis-pipeline.html)
+
 PDF ที่อัปโหลดเก็บใน `documents` ด้วย `source_type = 'document'` ผ่านการจัดหมวดเหมือนข่าว แต่ไม่เข้าตาราง A/B/C, gap
 และการเทียบรอบของ monitor (`analyze.news_only`) เพราะมีแค่บางบริษัท ใช้ในเส้นทางถามข้อมูลด้านล่างเท่านั้น
 
@@ -105,6 +107,8 @@ flowchart LR
     N["งบ · อันดับในหมวด · ราคาหุ้นหลังข่าว"] -.->|ถ้าถามเรื่องตัวเลข| A
     A --> OUT["คำตอบ + ที่มา [n]<br/>ลิงก์ หรือ ชื่อไฟล์ · หน้า (PDF)"]
 ```
+
+ดูแบบโต้ตอบ (archify): [ask-rag.html](diagrams/ask-rag.html)
 
 ไม่พบรายการเลยและไม่มีตัวเลขที่เกี่ยว → ตอบว่าไม่พบโดยไม่เรียก LLM ขั้นที่ 2
 ถ้าใช้ embedding ไม่ได้ → ค้นด้วยคำค้นอย่างเดียว

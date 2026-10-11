@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Huawei Cloud Deployment Plan (not built yet)",
+    "output": "docs/diagrams/huawei-cloud.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "users", "type": "external", "label": "Team + advisor", "sublabel": "browser", "pos": [30, 215], "size": [124, 62], "icon": "person" },
+    { "id": "proxy", "type": "security", "label": "Caddy proxy", "sublabel": "HTTPS + basic auth", "pos": [240, 215], "size": [136, 62], "tag": "EIP :443" },
+    { "id": "web", "type": "frontend", "label": "web", "sublabel": "Streamlit app.py", "pos": [470, 215], "size": [136, 62], "tag": "container" },
+    { "id": "ocr", "type": "backend", "label": "ocr", "sublabel": "FastAPI + Tesseract", "pos": [470, 50], "size": [136, 62], "tag": "profile ocr" },
+    { "id": "worker", "type": "backend", "label": "worker", "sublabel": "daily run + jobs", "pos": [470, 385], "size": [136, 62], "tag": "container" },
+    { "id": "obs", "type": "cloud", "label": "OBS bucket", "sublabel": "raw JSON · uploads", "pos": [960, 215], "size": [140, 62], "tag": "outside VPC" },
+    { "id": "rds", "type": "database", "label": "RDS PostgreSQL", "sublabel": "pgvector", "pos": [720, 300], "size": [140, 62], "tag": "private subnet" },
+    { "id": "ext", "type": "external", "label": "Outside services", "sublabel": "LLM · news · SET", "pos": [720, 470], "size": [140, 62], "tag": "via EIP" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Huawei Cloud AP-Bangkok VPC", "wraps": ["proxy", "web", "ocr", "worker", "rds"], "pad": 22 },
+    { "kind": "security-group", "label": "ECS · Docker Compose", "wraps": ["proxy", "web", "ocr", "worker"], "pad": 14 }
+  ],
+  "connections": [
+    { "id": "c-https", "from": "users", "to": "proxy", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "c-proxy", "from": "proxy", "to": "web", "label": ":8501", "variant": "emphasis" },
+    { "id": "c-ocr", "from": "web", "to": "ocr", "label": "PDF" },
+    { "id": "c-websql", "from": "web", "to": "rds", "label": "SQL", "variant": "emphasis" },
+    { "id": "c-uploads", "from": "web", "to": "obs", "label": "uploads", "variant": "dashed" },
+    { "id": "c-jobs", "from": "worker", "to": "rds", "label": "jobs · SQL" },
+    { "id": "c-out", "from": "worker", "to": "ext", "label": "fetch · LLM", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One ECS for the demo",
+      "items": [
+        "web and worker share one image; only the start command differs",
+        "ocr runs only with the compose profile, capped at 1.5 CPU / 1.5 GB",
+        "Images come from SWR; Cloud Eye watches CPU, RAM and disk"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Network rules",
+      "items": [
+        "Only 80/443 are open on the ECS (22 for the team IP)",
+        "RDS has no public IP and accepts 5432 from the ECS group only",
+        "All outbound calls leave through the ECS EIP, so no NAT gateway"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Still to check",
+      "items": [
+        "pgvector availability on RDS in AP-Bangkok",
+        "Whether the advisor's LLM endpoint accepts Huawei Cloud IPs",
+        "web also calls the LLM for reports and Ask; worker also writes raw JSON to OBS"
+      ]
+    }
+  ]
+}

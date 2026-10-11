@@ -25,6 +25,8 @@ flowchart TB
     DB --> VIEW["หน้าภาพรวม · ดาวน์โหลด Word"]
 ```
 
+ดูแบบโต้ตอบ (archify): [analysis-pipeline.html](../diagrams/analysis-pipeline.html) · [background-job.html](../diagrams/background-job.html)
+
 ## ขั้นตอน (`pipeline.run`)
 
 1. **ดึงข้อมูล** ([`collect.md`](collect.md)) และถ้าเปิดแหล่ง "งบการเงิน (SET)" จะดึงงบ ตัวเลขทั้งหมวด และราคาหุ้นด้วย ([`market.md`](market.md))

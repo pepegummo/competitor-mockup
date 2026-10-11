@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Competitor Compare: Analysis Pipeline",
+    "output": "docs/diagrams/analysis-pipeline.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 640],
+    "repository": {
+      "url": "https://github.com/pepegummo/competitor-mockup.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+    }
+  },
+  "stages": [
+    { "label": "Sources" },
+    { "label": "Ingest" },
+    { "label": "Store + classify" },
+    { "label": "Analyze" },
+    { "label": "Deliver" }
+  ],
+  "nodes": [
+    { "id": "news", "type": "external", "label": "News feeds", "sublabel": "Google News · RSS", "stage": 0, "row": 0, "tag": "public",
+      "sources": [{ "path": "core/sources/google_news.py", "line": 38, "end_line": 51 }, { "path": "core/sources/thai_rss.py", "line": 61, "end_line": 69 }] },
+    { "id": "reviews", "type": "external", "label": "App reviews", "sublabel": "App Store · Play", "stage": 0, "row": 1, "tag": "stars",
+      "sources": [{ "path": "core/sources/app_reviews.py", "line": 45, "end_line": 53 }] },
+    { "id": "setann", "type": "external", "label": "SET news", "sublabel": "last 90 days", "stage": 0, "row": 2, "tag": "unofficial",
+      "sources": [{ "path": "core/sources/set_api.py", "line": 157, "end_line": 164 }] },
+    { "id": "setmkt", "type": "external", "label": "SET market data", "sublabel": "statements · prices", "stage": 0, "row": 3, "tag": "unofficial",
+      "sources": [{ "path": "core/sources/set_api.py", "line": 252, "end_line": 289 }, { "path": "core/sources/set_api.py", "line": 98, "end_line": 139 }] },
+    { "id": "collect", "type": "backend", "label": "Collector", "sublabel": "dedupe hash + title", "stage": 1, "row": 1, "tag": "3 parallel",
+      "sources": [{ "path": "core/collect.py", "line": 54, "end_line": 107 }, { "path": "core/pipeline.py", "line": 104, "end_line": 111 }] },
+    { "id": "documents", "type": "database", "label": "documents", "sublabel": "unique hash", "stage": 2, "row": 1, "tag": "SQLite",
+      "sources": [{ "path": "core/db.py", "line": 189, "end_line": 201 }] },
+    { "id": "classify", "type": "backend", "label": "LLM classifier", "sublabel": "relevance · tone", "stage": 2, "row": 0, "tag": "qwen3.5",
+      "sources": [{ "path": "core/process.py", "line": 115, "end_line": 152 }] },
+    { "id": "facts", "type": "database", "label": "facts", "sublabel": "category · summary", "stage": 3, "row": 0, "tag": "SQLite",
+      "sources": [{ "path": "core/db.py", "line": 324, "end_line": 330 }, { "path": "core/db.py", "line": 353, "end_line": 370 }] },
+    { "id": "tables", "type": "backend", "label": "pandas tables", "sublabel": "A B C · gap", "stage": 3, "row": 1, "tag": "no LLM math",
+      "sources": [{ "path": "core/analyze.py", "line": 273, "end_line": 326 }, { "path": "core/analyze.py", "line": 227, "end_line": 270 }] },
+    { "id": "monitor", "type": "backend", "label": "Change detector", "sublabel": "vs last run", "stage": 3, "row": 2, "tag": "rules",
+      "sources": [{ "path": "core/monitor.py", "line": 23, "end_line": 51 }, { "path": "core/monitor.py", "line": 58, "end_line": 110 }, { "path": "core/pipeline.py", "line": 147, "end_line": 151 }] },
+    { "id": "market", "type": "backend", "label": "Market metrics", "sublabel": "rank · moves", "stage": 3, "row": 3, "tag": "cached",
+      "sources": [{ "path": "core/pipeline.py", "line": 124, "end_line": 127 }, { "path": "core/benchmark.py", "line": 88, "end_line": 106 }, { "path": "core/impact.py", "line": 73, "end_line": 135 }] },
+    { "id": "app", "type": "frontend", "label": "Streamlit app", "sublabel": "overview · Word", "stage": 4, "row": 0, "tag": "UI",
+      "sources": [{ "path": "ui/results.py", "line": 219, "end_line": 249 }, { "path": "core/export.py", "line": 60 }] },
+    { "id": "report", "type": "backend", "label": "Report writer", "sublabel": "LLM + citations", "stage": 4, "row": 1, "tag": "1 call",
+      "sources": [{ "path": "core/analyze.py", "line": 385, "end_line": 449 }, { "path": "core/analyze.py", "line": 348, "end_line": 377 }] },
+    { "id": "webhook", "type": "external", "label": "Chat webhook", "sublabel": "Discord · Slack", "stage": 4, "row": 2, "tag": "high only",
+      "sources": [{ "path": "core/monitor.py", "line": 130, "end_line": 142 }, { "path": "monitor.py", "line": 43, "end_line": 50 }] }
+  ],
+  "flows": [
+    { "id": "f-news", "from": "news", "to": "collect", "label": "headlines", "variant": "emphasis", "fromSide": "right", "toSide": "top", "via": [[315, 157]] },
+    { "id": "f-reviews", "from": "reviews", "to": "collect", "label": "reviews", "route": "straight" },
+    { "id": "f-set", "from": "setann", "to": "collect", "label": "notices", "fromSide": "right", "toSide": "bottom", "via": [[315, 385]] },
+    { "id": "f-docs", "from": "collect", "to": "documents", "label": "new items", "variant": "emphasis", "route": "straight" },
+    { "id": "f-batch", "from": "documents", "to": "classify", "label": "batches", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "route": "straight" },
+    { "id": "f-facts", "from": "classify", "to": "facts", "label": "labels", "variant": "emphasis", "route": "straight" },
+    { "id": "f-tables", "from": "facts", "to": "tables", "label": "relevant", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelDy": 25 },
+    { "id": "f-write", "from": "tables", "to": "report", "label": "tables", "variant": "emphasis", "route": "straight" },
+    { "id": "f-show", "from": "report", "to": "app", "label": "report", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "route": "straight" },
+    { "id": "f-snap", "from": "tables", "to": "monitor", "label": "df", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelDy": 25 },
+    { "id": "f-fin", "from": "setmkt", "to": "market", "label": "statements · prices", "variant": "dashed", "route": "straight" },
+    { "id": "f-moves", "from": "market", "to": "monitor", "label": "fin · moves", "fromSide": "top", "toSide": "bottom", "route": "straight" },
+    { "id": "f-alert", "from": "monitor", "to": "webhook", "label": "alerts", "variant": "security", "route": "straight" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Main path",
+      "items": [
+        "One pipeline.run serves the app button and the daily scheduler",
+        "Items already in documents are never sent to the LLM again",
+        "Every number is computed in pandas before the LLM writes prose"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "LLM calls",
+      "items": [
+        "Classifier: one call per 10 headlines or 5 items with text",
+        "Report writer: one call per run, retried once if Chinese text appears",
+        "Change detection and market metrics use no LLM"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Also in the report",
+      "items": [
+        "Changes since the last run open the report and the overview",
+        "Sector ranks and abnormal price moves when SET financials are on",
+        "Reviews (table R) and internal metrics (table I) stay out of news counts",
+        "Raw source JSON is written to data/raw for auditing"
+      ]
+    }
+  ]
+}

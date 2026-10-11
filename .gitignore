@@ -19,3 +19,12 @@ Thumbs.db
 # demo: keep only the database and last run
 demo/raw/
 demo/monitor.log
+
+# archify diagrams: keep the JSON source and HTML, not run receipts (they hold local absolute paths)
+docs/diagrams/*.delivery.json
+docs/diagrams/*.delivery-pending.json
+docs/diagrams/*.finalize.json
+docs/diagrams/*.finalize-summary.json
+docs/diagrams/*.browser-check.json
+docs/diagrams/.archify-delivery-lock.json
+.archify/

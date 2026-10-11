@@ -1,0 +1,343 @@
+{
+    "schema_version":  2,
+    "diagram_type":  "workflow",
+    "meta":  {
+                 "title":  "Automatic Monitoring and Alerts",
+                 "output":  "docs/diagrams/monitor.html",
+                 "locale":  "en",
+                 "quality_profile":  "showcase",
+                 "viewBox":  [
+                                 1100,
+                                 700
+                             ],
+                 "repository":  {
+                                    "url":  "https://github.com/pepegummo/competitor-mockup.git",
+                                    "provider":  "github",
+                                    "link_mode":  "web",
+                                    "revision":  "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+                                }
+             },
+    "lanes":  [
+                  {
+                      "id":  "app",
+                      "label":  "Streamlit app"
+                  },
+                  {
+                      "id":  "runner",
+                      "label":  "Runner"
+                  },
+                  {
+                      "id":  "rules",
+                      "label":  "Change rules"
+                  },
+                  {
+                      "id":  "data",
+                      "label":  "SQLite"
+                  }
+              ],
+    "phases":  [
+                   {
+                       "id":  "setup",
+                       "label":  "Set up",
+                       "fromCol":  0,
+                       "toCol":  1
+                   },
+                   {
+                       "id":  "run",
+                       "label":  "Run",
+                       "fromCol":  2,
+                       "toCol":  3,
+                       "variant":  "emphasis"
+                   },
+                   {
+                       "id":  "report",
+                       "label":  "Compare + notify",
+                       "fromCol":  4,
+                       "toCol":  5,
+                       "variant":  "security"
+                   }
+               ],
+    "mainPath":  [
+                     "save",
+                     "watch",
+                     "runpy",
+                     "pipe",
+                     "snap",
+                     "chg",
+                     "alert"
+                 ],
+    "nodes":  [
+                  {
+                      "id":  "save",
+                      "lane":  "app",
+                      "col":  0,
+                      "type":  "frontend",
+                      "label":  "Save watchlist",
+                      "sublabel":  "companies + opts",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "ui/watch_panel.py",
+                                          "line":  42,
+                                          "end_line":  54
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "runnow",
+                      "lane":  "app",
+                      "col":  1,
+                      "type":  "frontend",
+                      "label":  "Run now",
+                      "sublabel":  "one set",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "ui/watch_panel.py",
+                                          "line":  70,
+                                          "end_line":  73
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "view",
+                      "lane":  "app",
+                      "col":  5,
+                      "type":  "frontend",
+                      "label":  "What changed",
+                      "sublabel":  "overview + report",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "ui/results.py",
+                                          "line":  252,
+                                          "end_line":  262
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "sched",
+                      "lane":  "runner",
+                      "col":  1,
+                      "type":  "cloud",
+                      "label":  "Task Scheduler",
+                      "sublabel":  "daily 08:00",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "ui/watch_panel.py",
+                                          "line":  80,
+                                          "end_line":  103
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "runpy",
+                      "lane":  "runner",
+                      "col":  2,
+                      "type":  "backend",
+                      "label":  "monitor.py",
+                      "sublabel":  "every set",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "monitor.py",
+                                          "line":  74,
+                                          "end_line":  94
+                                      },
+                                      {
+                                          "path":  "monitor.py",
+                                          "line":  35,
+                                          "end_line":  50
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "pipe",
+                      "lane":  "runner",
+                      "col":  3,
+                      "type":  "backend",
+                      "label":  "pipeline.run",
+                      "sublabel":  "fetch · classify",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "core/pipeline.py",
+                                          "line":  84,
+                                          "end_line":  179
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "snap",
+                      "lane":  "rules",
+                      "col":  3,
+                      "type":  "backend",
+                      "label":  "Snapshot",
+                      "sublabel":  "last 30 days",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "core/monitor.py",
+                                          "line":  23,
+                                          "end_line":  51
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "chg",
+                      "lane":  "rules",
+                      "col":  4,
+                      "type":  "security",
+                      "label":  "Compare",
+                      "sublabel":  "high / info",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "core/monitor.py",
+                                          "line":  58,
+                                          "end_line":  110
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "watch",
+                      "lane":  "data",
+                      "col":  0,
+                      "type":  "database",
+                      "label":  "watchlists",
+                      "sublabel":  "config json",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "core/db.py",
+                                          "line":  448,
+                                          "end_line":  466
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "runs",
+                      "lane":  "data",
+                      "col":  4,
+                      "type":  "database",
+                      "label":  "runs",
+                      "sublabel":  "snapshot per run",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "core/db.py",
+                                          "line":  474,
+                                          "end_line":  506
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "alert",
+                      "lane":  "rules",
+                      "col":  5,
+                      "type":  "external",
+                      "label":  "Webhook",
+                      "sublabel":  "Discord · Slack",
+                      "width":  128,
+                      "sources":  [
+                                      {
+                                          "path":  "core/monitor.py",
+                                          "line":  119,
+                                          "end_line":  142
+                                      }
+                                  ]
+                  }
+              ],
+    "edges":  [
+                  {
+                      "id":  "e-save",
+                      "from":  "save",
+                      "to":  "watch",
+                      "label":  "config"
+                  },
+                  {
+                      "id":  "e-sets",
+                      "from":  "watch",
+                      "to":  "runpy",
+                      "label":  "all sets"
+                  },
+                  {
+                      "id":  "e-sched",
+                      "from":  "sched",
+                      "to":  "runpy",
+                      "label":  "daily",
+                      "variant":  "dashed"
+                  },
+                  {
+                      "id":  "e-now",
+                      "from":  "runnow",
+                      "to":  "runpy",
+                      "label":  "--id",
+                      "variant":  "dashed",
+                      "role":  "branch"
+                  },
+                  {
+                      "id":  "e-run",
+                      "from":  "runpy",
+                      "to":  "pipe",
+                      "label":  "per set",
+                      "variant":  "emphasis"
+                  },
+                  {
+                      "id":  "e-snap",
+                      "from":  "pipe",
+                      "to":  "snap",
+                      "label":  "df · fin",
+                      "variant":  "emphasis"
+                  },
+                  {
+                      "id":  "e-cmp",
+                      "from":  "snap",
+                      "to":  "chg",
+                      "label":  "compare",
+                      "variant":  "emphasis"
+                  },
+                  {
+                      "id":  "e-prev",
+                      "from":  "runs",
+                      "to":  "chg",
+                      "label":  "last run",
+                      "role":  "branch"
+                  },
+                  {
+                      "id":  "e-view",
+                      "from":  "chg",
+                      "to":  "view",
+                      "label":  "changes",
+                      "role":  "branch"
+                  },
+                  {
+                      "id":  "e-alert",
+                      "from":  "chg",
+                      "to":  "alert",
+                      "label":  "high only",
+                      "variant":  "security"
+                  }
+              ],
+    "cards":  [
+                  {
+                      "dot":  "rose",
+                      "title":  "High-level alerts",
+                      "items":  [
+                                    "New SET announcement, new negative news, new financial period",
+                                    "New abnormal price move, negative share up 10+ points, stars down 0.3+",
+                                    "Needs 5+ items in both runs for share and star rules"
+                                ]
+                  },
+                  {
+                      "dot":  "cyan",
+                      "title":  "Every run counts",
+                      "items":  [
+                                    "App runs and scheduled runs both save a snapshot in runs",
+                                    "A company with no earlier run gets no alerts",
+                                    "No LLM is used to decide what changed"
+                                ]
+                  }
+              ]
+}

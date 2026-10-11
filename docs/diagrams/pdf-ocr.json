@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "PDF Upload and OCR",
+    "output": "docs/diagrams/pdf-ocr.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 520],
+    "repository": {
+      "url": "https://github.com/pepegummo/competitor-mockup.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+    }
+  },
+  "stages": [
+    { "label": "Upload" },
+    { "label": "Route" },
+    { "label": "Read pages" },
+    { "label": "Split + save" },
+    { "label": "Use" }
+  ],
+  "nodes": [
+    { "id": "upload", "type": "frontend", "label": "Internal data page", "sublabel": "PDF + company", "stage": 0, "row": 1, "tag": "max 30 pages",
+      "sources": [{ "path": "ui/internal_panel.py", "line": 88, "end_line": 133 }] },
+    { "id": "router", "type": "backend", "label": "ocr.extract", "sublabel": "OCR_URL set?", "stage": 1, "row": 1, "tag": "core/ocr.py",
+      "sources": [{ "path": "core/ocr.py", "line": 14, "end_line": 27 }] },
+    { "id": "container", "type": "cloud", "label": "ocr container", "sublabel": "text, else Tesseract", "stage": 2, "row": 0, "tag": "POST /extract",
+      "sources": [{ "path": "ocr/app.py", "line": 15, "end_line": 22 }, { "path": "ocr/extract.py", "line": 50, "end_line": 75 }, { "path": "ocr/extract.py", "line": 16, "end_line": 22 }] },
+    { "id": "local", "type": "backend", "label": "In-app reader", "sublabel": "text; OCR if installed", "stage": 2, "row": 2, "tag": "pymupdf",
+      "sources": [{ "path": "core/ocr.py", "line": 17, "end_line": 18 }, { "path": "ocr/extract.py", "line": 40, "end_line": 47 }] },
+    { "id": "save", "type": "backend", "label": "save_pdf", "sublabel": "1,500-char parts", "stage": 3, "row": 1, "tag": "file · page",
+      "sources": [{ "path": "core/internal.py", "line": 118, "end_line": 138 }, { "path": "core/ocr.py", "line": 30, "end_line": 50 }] },
+    { "id": "documents", "type": "database", "label": "documents", "sublabel": "type document", "stage": 4, "row": 1, "tag": "LLM summary",
+      "sources": [{ "path": "core/db.py", "line": 189, "end_line": 201 }, { "path": "ui/internal_panel.py", "line": 127, "end_line": 129 }] },
+    { "id": "ask", "type": "frontend", "label": "Ask tab", "sublabel": "cites file · page", "stage": 4, "row": 0, "tag": "only here",
+      "sources": [{ "path": "core/analyze.py", "line": 348, "end_line": 382 }, { "path": "core/analyze.py", "line": 123, "end_line": 129 }] }
+  ],
+  "flows": [
+    { "id": "f-up", "from": "upload", "to": "router", "label": "bytes · range", "variant": "emphasis", "route": "straight" },
+    { "id": "f-remote", "from": "router", "to": "container", "label": "OCR_URL", "variant": "emphasis", "fromSide": "top", "toSide": "left", "via": [[315, 157]] },
+    { "id": "f-local", "from": "router", "to": "local", "label": "not set", "variant": "dashed", "fromSide": "bottom", "toSide": "left", "via": [[315, 385]] },
+    { "id": "f-pages1", "from": "container", "to": "save", "label": "pages", "variant": "emphasis", "fromSide": "right", "toSide": "top", "via": [[745, 157]] },
+    { "id": "f-pages2", "from": "local", "to": "save", "label": "pages", "variant": "dashed", "fromSide": "right", "toSide": "bottom", "via": [[745, 385]] },
+    { "id": "f-rows", "from": "save", "to": "documents", "label": "rows", "variant": "emphasis", "route": "straight" },
+    { "id": "f-search", "from": "documents", "to": "ask", "label": "search", "fromSide": "top", "toSide": "bottom", "route": "straight", "labelAt": [960, 214] }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Per page",
+      "items": [
+        "Embedded text is used first",
+        "OCR when text is under 40 chars, over 1% private-use glyphs, or under 70% normal characters",
+        "A page that needs OCR but cannot get it is marked skipped"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Kept apart from news",
+      "items": [
+        "Excluded from tables A/B/C, gap, charts and alerts",
+        "Original file stored in data/uploads/<sha256>.pdf",
+        "Same file and page range is never saved twice"
+      ]
+    }
+  ]
+}

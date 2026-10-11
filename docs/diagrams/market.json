@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Market Data: Financials, Sector Ranks, Price Moves",
+    "output": "docs/diagrams/market.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 640],
+    "repository": {
+      "url": "https://github.com/pepegummo/competitor-mockup.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+    }
+  },
+  "stages": [
+    { "label": "Source" },
+    { "label": "Fetch" },
+    { "label": "Store" },
+    { "label": "Compute" },
+    { "label": "Use" }
+  ],
+  "nodes": [
+    { "id": "setapi", "type": "external", "label": "set.or.th API", "sublabel": "cookie session", "stage": 0, "row": 1, "tag": "unofficial",
+      "sources": [{ "path": "core/sources/set_api.py", "line": 23, "end_line": 45 }] },
+    { "id": "fin", "type": "backend", "label": "Statements", "sublabel": "latest vs last year", "stage": 1, "row": 0, "tag": "per company",
+      "sources": [{ "path": "core/pipeline.py", "line": 52, "end_line": 70 }, { "path": "core/sources/set_api.py", "line": 252, "end_line": 289 }] },
+    { "id": "peers", "type": "backend", "label": "Sector peers", "sublabel": "highlight per stock", "stage": 1, "row": 1, "tag": "4 parallel",
+      "sources": [{ "path": "core/benchmark.py", "line": 30, "end_line": 61 }, { "path": "core/sources/set_api.py", "line": 79, "end_line": 123 }] },
+    { "id": "px", "type": "backend", "label": "Daily prices", "sublabel": "stock + SET/mai", "stage": 1, "row": 2, "tag": "6 months",
+      "sources": [{ "path": "core/impact.py", "line": 24, "end_line": 40 }, { "path": "core/sources/set_api.py", "line": 131, "end_line": 145 }] },
+    { "id": "fintable", "type": "database", "label": "financials", "sublabel": "1 row per company", "stage": 2, "row": 0, "tag": "SQLite",
+      "sources": [{ "path": "core/db.py", "line": 282, "end_line": 302 }] },
+    { "id": "hlcache", "type": "database", "label": "market_cache", "sublabel": "grp: hl: keys", "stage": 2, "row": 1, "tag": "24 h",
+      "sources": [{ "path": "core/db.py", "line": 561, "end_line": 578 }, { "path": "core/benchmark.py", "line": 64, "end_line": 76 }] },
+    { "id": "pxcache", "type": "database", "label": "market_cache", "sublabel": "px: keys", "stage": 2, "row": 2, "tag": "6 h",
+      "sources": [{ "path": "core/impact.py", "line": 50, "end_line": 57 }] },
+    { "id": "news", "type": "database", "label": "facts", "sublabel": "news · rss · set", "stage": 2, "row": 3, "tag": "dated",
+      "sources": [{ "path": "core/analyze.py", "line": 273, "end_line": 278 }] },
+    { "id": "tablef", "type": "backend", "label": "Table F", "sublabel": "growth · margin · bank", "stage": 3, "row": 0, "tag": "pandas",
+      "sources": [{ "path": "core/analyze.py", "line": 182, "end_line": 208 }, { "path": "core/analyze.py", "line": 163, "end_line": 179 }] },
+    { "id": "ranks", "type": "backend", "label": "Sector ranks", "sublabel": "rank · median", "stage": 3, "row": 1, "tag": "min 3 peers",
+      "sources": [{ "path": "core/benchmark.py", "line": 88, "end_line": 106 }, { "path": "core/benchmark.py", "line": 127, "end_line": 143 }] },
+    { "id": "moves", "type": "backend", "label": "Price moves", "sublabel": "minus market · z", "stage": 3, "row": 2, "tag": "|z| >= 2",
+      "sources": [{ "path": "core/impact.py", "line": 73, "end_line": 126 }] },
+    { "id": "use", "type": "frontend", "label": "Report · Ask", "sublabel": "monitor · overview", "stage": 4, "row": 1, "tag": "with refs",
+      "sources": [{ "path": "core/analyze.py", "line": 414, "end_line": 436 }, { "path": "core/ask.py", "line": 151, "end_line": 178 }, { "path": "core/monitor.py", "line": 43, "end_line": 49 }] }
+  ],
+  "flows": [
+    { "id": "f-fin", "from": "setapi", "to": "fin", "label": "statements", "fromSide": "top", "toSide": "left", "via": [[100, 157]] },
+    { "id": "f-peers", "from": "setapi", "to": "peers", "label": "peers", "variant": "emphasis", "route": "straight" },
+    { "id": "f-px", "from": "setapi", "to": "px", "label": "quotes", "fromSide": "bottom", "toSide": "left", "via": [[100, 385]] },
+    { "id": "f-save", "from": "fin", "to": "fintable", "label": "save", "route": "straight" },
+    { "id": "f-hl", "from": "peers", "to": "hlcache", "label": "cache", "variant": "emphasis", "route": "straight" },
+    { "id": "f-pxc", "from": "px", "to": "pxcache", "label": "cache", "route": "straight" },
+    { "id": "f-tf", "from": "fintable", "to": "tablef", "label": "rows", "route": "straight" },
+    { "id": "f-rk", "from": "hlcache", "to": "ranks", "label": "peer rows", "variant": "emphasis", "route": "straight" },
+    { "id": "f-mv", "from": "pxcache", "to": "moves", "label": "closes", "route": "straight" },
+    { "id": "f-news", "from": "news", "to": "moves", "label": "news days", "variant": "dashed", "fromSide": "right", "toSide": "bottom", "via": [[745, 499]] },
+    { "id": "f-u1", "from": "tablef", "to": "use", "label": "Table F", "fromSide": "right", "toSide": "top", "via": [[960, 157]] },
+    { "id": "f-u2", "from": "ranks", "to": "use", "label": "Table S", "variant": "emphasis", "route": "straight" },
+    { "id": "f-u3", "from": "moves", "to": "use", "label": "Table P", "fromSide": "right", "toSide": "bottom", "via": [[960, 385]] }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Unofficial API",
+      "items": [
+        "403 renews the cookie once; any other failure raises SourceSkipped",
+        "The analysis continues without market numbers and says why",
+        "SETSMART is the paid, official replacement"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "How numbers are judged",
+      "items": [
+        "Rank 1 is best; D/E low is good; P/E is not judged",
+        "Banks get NII, approximate NIM, cost to income, credit cost, LDR",
+        "Price move = stock return minus SET/mai return, over normal volatility"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Known gaps",
+      "items": [
+        "No bank NPL in the SET summary statements",
+        "XD dates are not removed from price moves",
+        "Companies outside the exchange have no market data"
+      ]
+    }
+  ]
+}

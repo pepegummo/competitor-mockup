@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Background Analysis Job",
+    "output": "docs/diagrams/background-job.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 600],
+    "column_fit": "spread",
+    "repository": {
+      "url": "https://github.com/pepegummo/competitor-mockup.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+    }
+  },
+  "participants": [
+    { "id": "user", "type": "external", "label": "User", "sublabel": "presses Start", "icon": "person" },
+    { "id": "page", "type": "frontend", "label": "Setup page", "sublabel": "state.start_job",
+      "sources": [{ "path": "ui/state.py", "line": 229, "end_line": 246 }] },
+    { "id": "jobs", "type": "database", "label": "jobs table", "sublabel": "status · log",
+      "sources": [{ "path": "core/db.py", "line": 627, "end_line": 653 }] },
+    { "id": "bg", "type": "backend", "label": "monitor.py --job", "sublabel": "pythonw process",
+      "sources": [{ "path": "ui/watch_panel.py", "line": 36, "end_line": 39 }, { "path": "monitor.py", "line": 53, "end_line": 71 }] },
+    { "id": "pipe", "type": "backend", "label": "pipeline.run", "sublabel": "collect · classify · report",
+      "sources": [{ "path": "core/pipeline.py", "line": 84, "end_line": 179 }] },
+    { "id": "watch", "type": "frontend", "label": "Sidebar watcher", "sublabel": "fragment every 2 s",
+      "sources": [{ "path": "ui/state.py", "line": 302, "end_line": 321 }] }
+  ],
+  "segments": [
+    { "from": 150, "to": 234, "label": "Start" },
+    { "from": 240, "to": 414, "label": "Run" },
+    { "from": 420, "to": 504, "label": "Finish" }
+  ],
+  "messages": [
+    { "id": "start", "from": "user", "to": "page", "y": 162, "label": "Start analysis", "variant": "default" },
+    { "id": "create", "from": "page", "to": "jobs", "y": 192, "label": "create_job: running", "variant": "default" },
+    { "id": "spawn", "from": "page", "to": "bg", "y": 222, "label": "spawn --job id", "variant": "dashed" },
+    { "id": "load", "from": "bg", "to": "jobs", "y": 252, "label": "get_job config", "variant": "default" },
+    { "id": "run", "from": "bg", "to": "pipe", "y": 282, "label": "run(companies, opts)", "variant": "emphasis" },
+    { "id": "log", "from": "pipe", "to": "jobs", "y": 312, "label": "append log lines", "variant": "dashed" },
+    { "id": "poll", "from": "watch", "to": "jobs", "y": 342, "label": "poll status", "variant": "default" },
+    { "id": "status", "from": "jobs", "to": "watch", "y": 372, "label": "running + last line", "variant": "return" },
+    { "id": "done", "from": "pipe", "to": "bg", "y": 402, "label": "report + run_id", "variant": "return" },
+    { "id": "finish", "from": "bg", "to": "jobs", "y": 432, "label": "finish_job done / error", "variant": "default" },
+    { "id": "open", "from": "watch", "to": "page", "y": 462, "label": "open_run(run_id)", "variant": "emphasis" },
+    { "id": "show", "from": "page", "to": "user", "y": 492, "label": "results on Overview", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "page", "from": 157, "to": 228 },
+    { "participant": "bg", "from": 222, "to": 438 },
+    { "participant": "pipe", "from": 282, "to": 408 },
+    { "participant": "watch", "from": 337, "to": 468 },
+    { "participant": "page", "from": 457, "to": 498 }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "The page never blocks",
+      "items": [
+        "Interactive steps (save companies, pick group members) run in the page first",
+        "Analysis runs in a separate pythonw process with the same environment",
+        "The user can switch pages; the sidebar opens the result when done"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Failure and exceptions",
+      "items": [
+        "run_job catches any exception and writes it to jobs.error",
+        "After 15 minutes the page offers a stop-waiting button",
+        "Discover mode runs in the page because the user must confirm names"
+      ]
+    }
+  ]
+}

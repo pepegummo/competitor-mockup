@@ -1,0 +1,321 @@
+{
+    "schema_version":  2,
+    "diagram_type":  "workflow",
+    "meta":  {
+                 "title":  "Classification and Accuracy Loop",
+                 "output":  "docs/diagrams/classify.html",
+                 "locale":  "en",
+                 "quality_profile":  "showcase",
+                 "repository":  {
+                                    "url":  "https://github.com/pepegummo/competitor-mockup.git",
+                                    "provider":  "github",
+                                    "link_mode":  "web",
+                                    "revision":  "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+                                },
+                 "viewBox":  [
+                                 1100,
+                                 700
+                             ]
+             },
+    "lanes":  [
+                  {
+                      "id":  "classifier",
+                      "label":  "process.py"
+                  },
+                  {
+                      "id":  "llm",
+                      "label":  "LLM"
+                  },
+                  {
+                      "id":  "data",
+                      "label":  "SQLite"
+                  },
+                  {
+                      "id":  "review",
+                      "label":  "Human review"
+                  }
+              ],
+    "phases":  [
+                   {
+                       "id":  "prepare",
+                       "label":  "Prepare",
+                       "fromCol":  0,
+                       "toCol":  2
+                   },
+                   {
+                       "id":  "classify",
+                       "label":  "Classify",
+                       "fromCol":  3,
+                       "toCol":  4,
+                       "variant":  "emphasis"
+                   },
+                   {
+                       "id":  "learn",
+                       "label":  "Save + learn",
+                       "fromCol":  5,
+                       "toCol":  5,
+                       "variant":  "dashed"
+                   }
+               ],
+    "mainPath":  [
+                     "pending",
+                     "batch",
+                     "prompt",
+                     "llm",
+                     "validate",
+                     "facts"
+                 ],
+    "nodes":  [
+                  {
+                      "id":  "pending",
+                      "lane":  "data",
+                      "col":  0,
+                      "type":  "database",
+                      "label":  "New documents",
+                      "sublabel":  "no fact yet",
+                      "sources":  [
+                                      {
+                                          "path":  "core/db.py",
+                                          "line":  337,
+                                          "end_line":  350
+                                      }
+                                  ],
+                      "width":  128
+                  },
+                  {
+                      "id":  "batch",
+                      "lane":  "classifier",
+                      "col":  1,
+                      "type":  "backend",
+                      "label":  "Batch",
+                      "sublabel":  "10 titles · 5 texts",
+                      "sources":  [
+                                      {
+                                          "path":  "core/process.py",
+                                          "line":  115,
+                                          "end_line":  127
+                                      }
+                                  ],
+                      "width":  128
+                  },
+                  {
+                      "id":  "prompt",
+                      "lane":  "classifier",
+                      "col":  2,
+                      "type":  "backend",
+                      "label":  "Build prompt",
+                      "sublabel":  "profile + examples",
+                      "sources":  [
+                                      {
+                                          "path":  "core/process.py",
+                                          "line":  71,
+                                          "end_line":  98
+                                      }
+                                  ],
+                      "width":  128
+                  },
+                  {
+                      "id":  "llm",
+                      "lane":  "llm",
+                      "col":  3,
+                      "type":  "external",
+                      "label":  "LLM call",
+                      "sublabel":  "4 batches at once",
+                      "tag":  "qwen3.5",
+                      "sources":  [
+                                      {
+                                          "path":  "core/process.py",
+                                          "line":  101,
+                                          "end_line":  112
+                                      },
+                                      {
+                                          "path":  "core/process.py",
+                                          "line":  130,
+                                          "end_line":  135
+                                      }
+                                  ],
+                      "width":  128
+                  },
+                  {
+                      "id":  "retry",
+                      "lane":  "llm",
+                      "col":  4,
+                      "type":  "security",
+                      "label":  "Retry once",
+                      "sublabel":  "then skip batch",
+                      "sources":  [
+                                      {
+                                          "path":  "core/process.py",
+                                          "line":  105,
+                                          "end_line":  112
+                                      }
+                                  ],
+                      "width":  128
+                  },
+                  {
+                      "id":  "validate",
+                      "lane":  "classifier",
+                      "col":  4,
+                      "type":  "security",
+                      "label":  "Validate",
+                      "sublabel":  "ids · enums",
+                      "sources":  [
+                                      {
+                                          "path":  "core/process.py",
+                                          "line":  40,
+                                          "end_line":  59
+                                      }
+                                  ],
+                      "width":  128
+                  },
+                  {
+                      "id":  "facts",
+                      "lane":  "data",
+                      "col":  5,
+                      "type":  "database",
+                      "label":  "facts",
+                      "sublabel":  "off-topic hidden",
+                      "sources":  [
+                                      {
+                                          "path":  "core/process.py",
+                                          "line":  143,
+                                          "end_line":  151
+                                      },
+                                      {
+                                          "path":  "core/db.py",
+                                          "line":  324,
+                                          "end_line":  330
+                                      }
+                                  ],
+                      "width":  128
+                  },
+                  {
+                      "id":  "review",
+                      "lane":  "review",
+                      "col":  5,
+                      "type":  "frontend",
+                      "label":  "Accuracy page",
+                      "sublabel":  "check verdicts",
+                      "sources":  [
+                                      {
+                                          "path":  "ui/accuracy_panel.py",
+                                          "line":  12,
+                                          "end_line":  22
+                                      },
+                                      {
+                                          "path":  "core/accuracy.py",
+                                          "line":  15,
+                                          "end_line":  39
+                                      }
+                                  ],
+                      "width":  128
+                  },
+                  {
+                      "id":  "labels",
+                      "lane":  "data",
+                      "col":  2,
+                      "type":  "database",
+                      "label":  "labels",
+                      "sublabel":  "human verdicts",
+                      "sources":  [
+                                      {
+                                          "path":  "core/db.py",
+                                          "line":  678,
+                                          "end_line":  682
+                                      },
+                                      {
+                                          "path":  "core/db.py",
+                                          "line":  702,
+                                          "end_line":  716
+                                      }
+                                  ],
+                      "width":  128
+                  }
+              ],
+    "edges":  [
+                  {
+                      "id":  "e-pending",
+                      "from":  "pending",
+                      "to":  "batch",
+                      "label":  "unseen only"
+                  },
+                  {
+                      "id":  "e-batch",
+                      "from":  "batch",
+                      "to":  "prompt"
+                  },
+                  {
+                      "id":  "e-ask",
+                      "from":  "prompt",
+                      "to":  "llm",
+                      "label":  "JSON request",
+                      "variant":  "emphasis"
+                  },
+                  {
+                      "id":  "e-answer",
+                      "from":  "llm",
+                      "to":  "validate",
+                      "label":  "JSON array",
+                      "variant":  "emphasis"
+                  },
+                  {
+                      "id":  "e-save",
+                      "from":  "validate",
+                      "to":  "facts",
+                      "label":  "save",
+                      "variant":  "emphasis"
+                  },
+                  {
+                      "id":  "e-bad",
+                      "from":  "validate",
+                      "to":  "retry",
+                      "label":  "invalid",
+                      "variant":  "security",
+                      "role":  "error"
+                  },
+                  {
+                      "id":  "e-queue",
+                      "from":  "facts",
+                      "to":  "review",
+                      "label":  "random queue",
+                      "variant":  "dashed",
+                      "role":  "branch"
+                  },
+                  {
+                      "id":  "e-verdict",
+                      "from":  "review",
+                      "to":  "labels",
+                      "label":  "verdict",
+                      "variant":  "dashed",
+                      "role":  "branch"
+                  },
+                  {
+                      "id":  "e-fewshot",
+                      "from":  "labels",
+                      "to":  "prompt",
+                      "label":  "few-shot",
+                      "variant":  "dashed",
+                      "role":  "return"
+                  }
+              ],
+    "cards":  [
+                  {
+                      "dot":  "emerald",
+                      "title":  "One LLM pass per item",
+                      "items":  [
+                                    "Only documents without a fact are sent",
+                                    "Relevance, category, sentiment and a Thai summary come back in one answer",
+                                    "Off-topic news (news, rss) is stored as irrelevant so it is never re-sent"
+                                ]
+                  },
+                  {
+                      "dot":  "violet",
+                      "title":  "Accuracy loop",
+                      "items":  [
+                                    "The review queue is about one third dropped items, so both sides are measured",
+                                    "Up to 6 checked mistakes become examples in the next prompt",
+                                    "Re-classify old news skips anything a human already checked"
+                                ]
+                  }
+              ]
+}

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Data Collection",
+    "output": "docs/diagrams/collect.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 520],
+    "repository": {
+      "url": "https://github.com/pepegummo/competitor-mockup.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+    }
+  },
+  "stages": [
+    { "label": "Setup" },
+    { "label": "Fetch" },
+    { "label": "Dedupe" },
+    { "label": "Enrich" },
+    { "label": "Store" }
+  ],
+  "nodes": [
+    { "id": "profile", "type": "backend", "label": "Profile lookup", "sublabel": "first run only", "stage": 0, "row": 0, "tag": "1 LLM call",
+      "sources": [{ "path": "core/pipeline.py", "line": 28, "end_line": 49 }, { "path": "core/profile.py", "line": 40, "end_line": 76 }] },
+    { "id": "companies", "type": "database", "label": "companies", "sublabel": "aliases · app ids", "stage": 0, "row": 1, "tag": "SQLite",
+      "sources": [{ "path": "core/db.py", "line": 222, "end_line": 236 }, { "path": "core/pipeline.py", "line": 23, "end_line": 25 }] },
+    { "id": "sources", "type": "external", "label": "5 source modules", "sublabel": "fetch(row, limit)", "stage": 1, "row": 1, "tag": "3 parallel",
+      "sources": [{ "path": "core/collect.py", "line": 13, "end_line": 19 }, { "path": "core/sources/__init__.py", "line": 10, "end_line": 16 }, { "path": "core/collect.py", "line": 65, "end_line": 74 }] },
+    { "id": "raw", "type": "database", "label": "data/raw", "sublabel": "JSON per day", "stage": 1, "row": 2, "tag": "audit",
+      "sources": [{ "path": "core/collect.py", "line": 76, "end_line": 77 }] },
+    { "id": "hash", "type": "security", "label": "Hash check", "sublabel": "already stored?", "stage": 2, "row": 1, "tag": "sha256",
+      "sources": [{ "path": "core/collect.py", "line": 39, "end_line": 45 }, { "path": "core/collect.py", "line": 80, "end_line": 84 }] },
+    { "id": "title", "type": "security", "label": "Title check", "sublabel": "same story?", "stage": 2, "row": 2, "tag": "title_key",
+      "sources": [{ "path": "core/collect.py", "line": 48, "end_line": 51 }, { "path": "core/collect.py", "line": 85, "end_line": 90 }, { "path": "core/db.py", "line": 212, "end_line": 219 }] },
+    { "id": "fulltext", "type": "backend", "label": "Full text", "sublabel": "optional", "stage": 3, "row": 2, "tag": "trafilatura",
+      "sources": [{ "path": "core/fulltext.py", "line": 21, "end_line": 42 }, { "path": "core/collect.py", "line": 92, "end_line": 95 }] },
+    { "id": "documents", "type": "database", "label": "documents", "sublabel": "unique hash", "stage": 4, "row": 2, "tag": "SQLite",
+      "sources": [{ "path": "core/collect.py", "line": 99, "end_line": 104 }, { "path": "core/db.py", "line": 189, "end_line": 201 }] }
+  ],
+  "flows": [
+    { "id": "f-profile", "from": "profile", "to": "companies", "label": "aliases · symbol", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelDy": 25 },
+    { "id": "f-row", "from": "companies", "to": "sources", "label": "names · ids", "variant": "emphasis", "route": "straight" },
+    { "id": "f-raw", "from": "sources", "to": "raw", "label": "dump", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelDy": 25 },
+    { "id": "f-items", "from": "sources", "to": "hash", "label": "items", "variant": "emphasis", "route": "straight" },
+    { "id": "f-new", "from": "hash", "to": "title", "label": "new", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelDy": 25 },
+    { "id": "f-unique", "from": "title", "to": "fulltext", "label": "unique", "variant": "emphasis", "route": "straight" },
+    { "id": "f-insert", "from": "fulltext", "to": "documents", "label": "insert", "variant": "emphasis", "route": "straight" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Five sources, one shape",
+      "items": [
+        "Google News, Thai RSS, app reviews, company website, SET announcements",
+        "Every module returns item(): type, source, title, url, date, content, rating",
+        "A source that cannot run raises SourceSkipped and the rest continue"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Two duplicate filters",
+      "items": [
+        "Hash = company + url + title, so a stored item is never inserted twice",
+        "Title key drops the publisher suffix to catch one story from two sources",
+        "Reviews skip the title check"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Full text (optional)",
+      "items": [
+        "Only items shorter than 300 characters, 4 links at a time",
+        "Google News links are decoded first; text is capped at 4,000 characters",
+        "Skipped for reviews and SET news"
+      ]
+    }
+  ]
+}

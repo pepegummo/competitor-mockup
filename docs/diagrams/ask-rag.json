@@ -1,0 +1,297 @@
+{
+    "schema_version":  1,
+    "diagram_type":  "sequence",
+    "meta":  {
+                 "title":  "Competitor Compare: Ask (RAG) Sequence",
+                 "output":  "docs/diagrams/ask-rag.html",
+                 "locale":  "en",
+                 "quality_profile":  "showcase",
+                 "viewBox":  [
+                                 1080,
+                                 600
+                             ],
+                 "column_fit":  "spread",
+                 "repository":  {
+                                    "url":  "https://github.com/pepegummo/competitor-mockup.git",
+                                    "provider":  "github",
+                                    "link_mode":  "web",
+                                    "revision":  "37cee1c3f1bbac64d3a1d5aece77aa3f04fd597d"
+                                }
+             },
+    "participants":  [
+                         {
+                             "id":  "user",
+                             "type":  "external",
+                             "label":  "User",
+                             "sublabel":  "asks in Thai",
+                             "icon":  "person"
+                         },
+                         {
+                             "id":  "tab",
+                             "type":  "frontend",
+                             "label":  "Ask tab",
+                             "sublabel":  "Streamlit",
+                             "sources":  [
+                                             {
+                                                 "path":  "ui/sections/ask.py",
+                                                 "line":  21,
+                                                 "end_line":  54
+                                             }
+                                         ]
+                         },
+                         {
+                             "id":  "ask",
+                             "type":  "backend",
+                             "label":  "ask.answer",
+                             "sublabel":  "filter · rank · cite",
+                             "sources":  [
+                                             {
+                                                 "path":  "core/ask.py",
+                                                 "line":  131,
+                                                 "end_line":  189
+                                             },
+                                             {
+                                                 "path":  "core/ask.py",
+                                                 "line":  73,
+                                                 "end_line":  128
+                                             }
+                                         ]
+                         },
+                         {
+                             "id":  "llm",
+                             "type":  "external",
+                             "label":  "LLM",
+                             "sublabel":  "qwen3.5 endpoint",
+                             "sources":  [
+                                             {
+                                                 "path":  "core/llm.py",
+                                                 "line":  32,
+                                                 "end_line":  66
+                                             }
+                                         ]
+                         },
+                         {
+                             "id":  "embed",
+                             "type":  "database",
+                             "label":  "Embeddings",
+                             "sublabel":  "e5-small + cache",
+                             "sources":  [
+                                             {
+                                                 "path":  "core/embed.py",
+                                                 "line":  56,
+                                                 "end_line":  70
+                                             },
+                                             {
+                                                 "path":  "core/embed.py",
+                                                 "line":  85,
+                                                 "end_line":  97
+                                             }
+                                         ]
+                         },
+                         {
+                             "id":  "numbers",
+                             "type":  "database",
+                             "label":  "Market tables",
+                             "sublabel":  "F · ranks · moves",
+                             "sources":  [
+                                             {
+                                                 "path":  "core/analyze.py",
+                                                 "line":  182,
+                                                 "end_line":  208
+                                             },
+                                             {
+                                                 "path":  "core/benchmark.py",
+                                                 "line":  88,
+                                                 "end_line":  106
+                                             },
+                                             {
+                                                 "path":  "core/impact.py",
+                                                 "line":  73,
+                                                 "end_line":  126
+                                             }
+                                         ]
+                         }
+                     ],
+    "segments":  [
+                     {
+                         "from":  150,
+                         "to":  264,
+                         "label":  "Parse"
+                     },
+                     {
+                         "from":  270,
+                         "to":  384,
+                         "label":  "Retrieve"
+                     },
+                     {
+                         "from":  390,
+                         "to":  504,
+                         "label":  "Answer"
+                     }
+                 ],
+    "messages":  [
+                     {
+                         "id":  "q",
+                         "from":  "user",
+                         "to":  "tab",
+                         "y":  162,
+                         "label":  "question",
+                         "variant":  "default"
+                     },
+                     {
+                         "id":  "call",
+                         "from":  "tab",
+                         "to":  "ask",
+                         "y":  192,
+                         "label":  "answer(question, df)",
+                         "variant":  "emphasis"
+                     },
+                     {
+                         "id":  "parse",
+                         "from":  "ask",
+                         "to":  "llm",
+                         "y":  222,
+                         "label":  "parse to filters",
+                         "variant":  "default"
+                     },
+                     {
+                         "id":  "filters",
+                         "from":  "llm",
+                         "to":  "ask",
+                         "y":  252,
+                         "label":  "companies · keywords · days",
+                         "variant":  "return"
+                     },
+                     {
+                         "id":  "sim",
+                         "from":  "ask",
+                         "to":  "embed",
+                         "y":  282,
+                         "label":  "similarity(question, items)",
+                         "variant":  "default"
+                     },
+                     {
+                         "id":  "cos",
+                         "from":  "embed",
+                         "to":  "ask",
+                         "y":  312,
+                         "label":  "cosine per item",
+                         "variant":  "return"
+                     },
+                     {
+                         "id":  "need",
+                         "from":  "ask",
+                         "to":  "numbers",
+                         "y":  342,
+                         "label":  "if needs_numbers",
+                         "variant":  "dashed"
+                     },
+                     {
+                         "id":  "nums",
+                         "from":  "numbers",
+                         "to":  "ask",
+                         "y":  372,
+                         "label":  "rows with ref",
+                         "variant":  "return"
+                     },
+                     {
+                         "id":  "write",
+                         "from":  "ask",
+                         "to":  "llm",
+                         "y":  402,
+                         "label":  "answer from top 30 items",
+                         "variant":  "emphasis"
+                     },
+                     {
+                         "id":  "text",
+                         "from":  "llm",
+                         "to":  "ask",
+                         "y":  432,
+                         "label":  "Thai answer + [n]",
+                         "variant":  "return"
+                     },
+                     {
+                         "id":  "back",
+                         "from":  "ask",
+                         "to":  "tab",
+                         "y":  462,
+                         "label":  "linked refs",
+                         "variant":  "return"
+                     },
+                     {
+                         "id":  "show",
+                         "from":  "tab",
+                         "to":  "user",
+                         "y":  492,
+                         "label":  "answer + scope",
+                         "variant":  "return"
+                     }
+                 ],
+    "activations":  [
+                        {
+                            "participant":  "tab",
+                            "from":  187,
+                            "to":  498,
+                            "type":  "frontend"
+                        },
+                        {
+                            "participant":  "ask",
+                            "from":  192,
+                            "to":  468,
+                            "type":  "backend"
+                        },
+                        {
+                            "participant":  "llm",
+                            "from":  217,
+                            "to":  258,
+                            "type":  "external"
+                        },
+                        {
+                            "participant":  "embed",
+                            "from":  277,
+                            "to":  318,
+                            "type":  "database"
+                        },
+                        {
+                            "participant":  "numbers",
+                            "from":  337,
+                            "to":  378,
+                            "type":  "database"
+                        },
+                        {
+                            "participant":  "llm",
+                            "from":  397,
+                            "to":  438,
+                            "type":  "external"
+                        }
+                    ],
+    "cards":  [
+                  {
+                      "dot":  "emerald",
+                      "title":  "Hybrid retrieval",
+                      "items":  [
+                                    "Hard filters first: company, days, sentiment, no irrelevant items",
+                                    "Score = keyword hits × 2 + category match + 3 × similarity",
+                                    "Similar enough = 0.05 above the median and within 0.03 of the best"
+                                ]
+                  },
+                  {
+                      "dot":  "rose",
+                      "title":  "No answer without evidence",
+                      "items":  [
+                                    "Nothing matched and no numbers: reply \u0027not found\u0027 with no second LLM call",
+                                    "An unknown brand never borrows similar news from other companies",
+                                    "Uploaded PDFs cite as file · page instead of a link"
+                                ]
+                  },
+                  {
+                      "dot":  "amber",
+                      "title":  "Fallbacks",
+                      "items":  [
+                                    "Embedding unavailable: keyword search only",
+                                    "Parse fails: empty filters, search everything",
+                                    "LLM down: reuse the logged answer for the same prompt"
+                                ]
+                  }
+              ]
+}

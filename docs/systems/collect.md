@@ -26,6 +26,8 @@ flowchart LR
     DOC --> NEXT["ขั้นจัดหมวด<br/>classify.md"]
 ```
 
+ดูแบบโต้ตอบ (archify): [collect.html](../diagrams/collect.html)
+
 ## ขั้นตอน
 
 1. **ข้อมูลประกอบบริษัท** (`pipeline.lookup_symbols` → `profile.suggest_profiles`)

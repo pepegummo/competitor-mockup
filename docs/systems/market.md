@@ -27,6 +27,8 @@ flowchart LR
     P --> OUT
 ```
 
+ดูแบบโต้ตอบ (archify): [market.html](../diagrams/market.html)
+
 ## ขั้นตอน
 
 ### การเรียก SET API (`set_api._get`)

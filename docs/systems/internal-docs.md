@@ -27,6 +27,8 @@ flowchart LR
     end
 ```
 
+ดูแบบโต้ตอบ (archify): [pdf-ocr.html](../diagrams/pdf-ocr.html)
+
 ## ตัวเลข (CSV / Excel)
 
 1. **อ่านไฟล์** (`internal.read_file`): `.xlsx`/`.xls` ด้วย pandas (openpyxl) · CSV ลอง `utf-8-sig` ก่อนแล้ว `cp874` (CSV ภาษาไทยจาก Excel รุ่นเก่า)
