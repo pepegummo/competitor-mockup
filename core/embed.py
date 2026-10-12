@@ -1,5 +1,6 @@
 """ค้นด้วยความหมาย (embedding) ให้แท็บถามข้อมูล: คำถาม "เน็ตบ้าน" เจอข่าว "บรอดแบนด์" แม้คำไม่ตรงกัน
 ข้อความ (หัวข้อ + สรุป) ถูกแปลงเป็นเวกเตอร์แล้วเก็บในตาราง embeddings คำนวณครั้งเดียวต่อข้อความ
+ความใกล้คิดใน PostgreSQL ด้วย pgvector (db.embedding_scores) · SQLite หรือไม่มี pgvector คิดด้วย numpy
 EMBED_BACKEND=local (ค่าเริ่ม): รันโมเดลในเครื่องด้วย sentence-transformers (ครั้งแรกโหลดโมเดล ~470MB)
 EMBED_BACKEND=api: เรียก /v1/embeddings ของ endpoint เดียวกับ LLM (ใช้เมื่อมีโมเดล embedding ให้ใช้)
 ใช้ไม่ได้ (ไม่ได้ลงไลบรารี เน็ตล่ม ฯลฯ) → similarity() คืน None แท็บถามข้อมูลใช้คำค้นอย่างเดียวเหมือนเดิม"""
@@ -53,10 +54,10 @@ def _api(texts, kind):
     return v / np.linalg.norm(v, axis=1, keepdims=True)
 
 
-def vectors(texts, kind="passage"):
-    """เวกเตอร์ (normalize แล้ว) ของแต่ละข้อความ เรียงตาม texts · ใช้ cache ในตาราง embeddings"""
+def ensure(texts, kind="passage"):
+    """คำนวณและเก็บเวกเตอร์ของข้อความที่ยังไม่มีในตาราง embeddings (ไม่โหลดตัวที่มีแล้ว) คืน hash เรียงตาม texts"""
     keys = [_hash(kind, t) for t in texts]
-    have = db.get_embeddings(set(keys))
+    have = db.embedding_hashes(set(keys))
     missing = list(dict.fromkeys(k for k in keys if k not in have))
     if missing:
         text_of = dict(zip(keys, texts))
@@ -66,7 +67,13 @@ def vectors(texts, kind="passage"):
             vecs = (_api if BACKEND == "api" else _local)([text_of[k] for k in part], kind)
             fresh.update({k: np.asarray(v, dtype=np.float32).tobytes() for k, v in zip(part, vecs)})
         db.save_embeddings(fresh, MODEL)
-        have.update(fresh)
+    return keys
+
+
+def vectors(texts, kind="passage"):
+    """เวกเตอร์ (normalize แล้ว) ของแต่ละข้อความ เรียงตาม texts · ใช้ cache ในตาราง embeddings"""
+    keys = ensure(texts, kind)
+    have = db.get_embeddings(set(keys))
     return np.stack([np.frombuffer(have[k], dtype=np.float32) for k in keys])
 
 
@@ -75,7 +82,7 @@ def warm(df):
     if df.empty:
         return 0
     try:
-        vectors([_text(t, s) for t, s in zip(df["title"], df["summary"])], "passage")
+        ensure([_text(t, s) for t, s in zip(df["title"], df["summary"])], "passage")
     except Exception as e:  # noqa: BLE001
         log.warning("คำนวณเวกเตอร์ล่วงหน้าไม่ได้: %s", e)
         return 0
@@ -87,12 +94,17 @@ def similarity(question, df):
     if df.empty:
         return None
     try:
-        docs = vectors([_text(t, s) for t, s in zip(df["title"], df["summary"])], "passage")
+        keys = ensure([_text(t, s) for t, s in zip(df["title"], df["summary"])], "passage")
         q = vectors([question], "query")[0]
     except Exception as e:  # noqa: BLE001 ไม่มีโมเดล/เน็ต: ถามข้อมูลยังใช้คำค้นได้
         log.warning("ค้นด้วยความหมายไม่ได้ ใช้คำค้นอย่างเดียว: %s", e)
         return None
-    sims = pd.Series(docs @ q, index=df.index)
+    scores = db.embedding_scores(q.tobytes(), keys)  # PostgreSQL + pgvector: คิดใน DB ไม่ต้องโหลดเวกเตอร์
+    if scores is not None:
+        sims = pd.Series([scores[k] for k in keys], index=df.index)
+    else:
+        have = db.get_embeddings(set(keys))
+        sims = pd.Series(np.stack([np.frombuffer(have[k], dtype=np.float32) for k in keys]) @ q, index=df.index)
     sims[df["title"].fillna("").str.strip().str.len() < MIN_TITLE] = 0.0
     return sims
 

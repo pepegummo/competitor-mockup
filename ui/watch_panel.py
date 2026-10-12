@@ -15,6 +15,8 @@ SCRIPT = ROOT / "monitor.py"
 LOG = db.DATA_DIR / "monitor.log"
 TASK = "CompetitorCompareMonitor"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# docker: ไม่รัน monitor.py เอง แค่ใส่งานลงตาราง jobs ให้ container worker (worker.py) หยิบ และรันรายวันตาม MONITOR_AT
+QUEUE = os.environ.get("CC_JOB_QUEUE", "").strip().lower() in ("1", "true", "yes")
 
 
 def _python(background=True):
@@ -37,6 +39,22 @@ def start_background(*args):
     """รัน monitor.py เบื้องหลัง (ไม่มีหน้าต่าง) ส่ง environment เดิมไปด้วย เช่น CC_DATA_DIR, LLM_REPLAY"""
     subprocess.Popen([str(_python()), str(SCRIPT), *args], cwd=ROOT, creationflags=NO_WINDOW,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def submit_job(config):
+    """สร้างงานวิเคราะห์ในตาราง jobs คืน id · docker: รอ worker หยิบ · บนเครื่อง: รัน monitor.py --job ทันที"""
+    if QUEUE:
+        return db.create_job(config, status="queued")
+    job_id = db.create_job(config)
+    start_background("--job", str(job_id))
+    return job_id
+
+
+def run_watch_now(watch_id):
+    if QUEUE:
+        db.create_job({"watch_id": watch_id}, status="queued")
+    else:
+        start_background("--id", str(watch_id))
 
 
 def save_form(res):
@@ -69,7 +87,7 @@ def _watch_list(on_open):
                 opened = True
             if c3.button("รันตอนนี้", key=f"w_run_{w['id']}", width="stretch",
                          help="รันเบื้องหลัง ใช้เวลาหลายนาที เสร็จแล้วกด “เปิดผลล่าสุด”"):
-                start_background("--id", str(w["id"]))
+                run_watch_now(w["id"])
                 st.toast(f"เริ่มรัน {w['name']} เบื้องหลังแล้ว")
             if c4.button("ลบ", key=f"w_del_{w['id']}", icon=":material/delete:", help="ลบชุดนี้"):
                 db.delete_watchlist(w["id"])
@@ -79,6 +97,11 @@ def _watch_list(on_open):
 
 def _schedule():
     st.markdown("**ตั้งเวลารันทุกวัน**")
+    if QUEUE:
+        at = os.environ.get("MONITOR_AT", "").strip()
+        st.caption(f"รันทุกชุดในรายการอัตโนมัติทุกวันเวลา {at} น. (ตั้งด้วย MONITOR_AT ในไฟล์ .env บนเซิร์ฟเวอร์)" if at
+                   else "ยังไม่ได้ตั้งเวลา ใส่ MONITOR_AT=07:00 ในไฟล์ .env บนเซิร์ฟเวอร์ แล้ว docker compose up -d")
+        return
     if os.name != "nt":
         st.code(f"0 8 * * * {_python(False)} {SCRIPT}", language="bash")
         st.caption("ใส่บรรทัดนี้ใน crontab (crontab -e)")

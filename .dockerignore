@@ -1,0 +1,28 @@
+# secrets: ส่งเข้า container ผ่าน env_file ตอนรัน ไม่ฝังใน image
+.env
+.streamlit/secrets.toml
+
+# ข้อมูลอยู่ใน volume app_data ไม่ใช่ใน image
+data/
+demo/raw/
+demo/monitor.log
+
+.venv/
+.git/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.archify/
+.vscode/
+.idea/
+
+# service แยก (build จาก ocr/) · เอกสาร/เทส ไม่ต้องใช้ตอนรัน
+# แต่ core/ocr.py ใช้ ocr/extract.py อ่าน PDF ในแอปเอง (เมื่อไม่ได้ตั้ง OCR_URL) จึงต้องมีใน image
+ocr/
+!ocr/__init__.py
+!ocr/extract.py
+docs/
+tests/
+requirements-dev.txt
+run_demo.bat
+docker-compose.yml

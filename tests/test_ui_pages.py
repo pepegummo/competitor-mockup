@@ -34,6 +34,7 @@ def demo_db(tmp_path, monkeypatch):
     shutil.copy(DEMO / "last_run.json", tmp_path / "last_run.json")
     monkeypatch.setattr(db, "DATA_DIR", tmp_path)
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "app.db")
+    monkeypatch.setattr(db, "DATABASE_URL", "")  # ชุดเดโมเป็นไฟล์ SQLite
     monkeypatch.setattr(state, "LAST_RUN", tmp_path / "last_run.json")
     monkeypatch.setenv("CC_DEMO", "1")
     monkeypatch.setenv("LLM_REPLAY", "1")

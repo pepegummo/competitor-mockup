@@ -240,10 +240,8 @@ def start_job(competitors, self_name=None, mode="compare", opts=None, focus=None
                           expanded=False)
         for name, g in groups.items():
             db.upsert_company(name, role="self" if g["parent"] == self_name else "competitor", origin="group")
-    job_id = db.create_job(dict(companies=companies, self_name=self_name, mode=mode, opts=opts, focus=focus,
-                                groups=groups))
-    watch_panel.start_background("--job", str(job_id))
-    st.session_state.job_id = job_id
+    st.session_state.job_id = watch_panel.submit_job(dict(companies=companies, self_name=self_name, mode=mode,
+                                                          opts=opts, focus=focus, groups=groups))
 
 
 def run_pipeline(competitors, self_name=None, origins=None, mode="compare", opts=None, focus=None,
@@ -285,6 +283,10 @@ def finish(new_res, empty):
 
 # ---------- งานเบื้องหลัง ----------
 
+def _waiting(job):
+    return "รอคิว (มีงานอื่นรันอยู่)" if job["status"] == "queued" else "กำลังเริ่ม..."
+
+
 def _job_lines(job):
     return [tuple(line.split("|", 1)) for line in job["log"].splitlines() if "|" in line]
 
@@ -306,9 +308,9 @@ def job_watch():
     if not job:
         st.session_state.pop("job_id", None)
         return
-    if job["status"] == "running":
+    if job["status"] in ("queued", "running"):
         seconds = int((datetime.now() - datetime.fromisoformat(job["started_at"])).total_seconds())
-        label = next((t for k, t in reversed(_job_lines(job)) if k == "status"), "กำลังเริ่ม...")
+        label = next((t for k, t in reversed(_job_lines(job)) if k == "status"), _waiting(job))
         st.info(f"**กำลังวิเคราะห์** · {seconds} วินาที  \n{label}", icon=":material/hourglass_top:")
         return
     st.session_state.pop("job_id", None)
@@ -325,11 +327,11 @@ def job_watch():
 def job_progress():
     """รายละเอียดความคืบหน้าในหน้าภาพรวม (เมื่อเสร็จ job_watch ใน sidebar จะเปิดผลให้)"""
     job = db.get_job(st.session_state.get("job_id"))
-    if not job or job["status"] != "running":
+    if not job or job["status"] not in ("queued", "running"):
         return
     seconds = int((datetime.now() - datetime.fromisoformat(job["started_at"])).total_seconds())
     lines = _job_lines(job)
-    label = next((t for k, t in reversed(lines) if k == "status"), "กำลังเริ่ม...")
+    label = next((t for k, t in reversed(lines) if k == "status"), _waiting(job))
     with st.status(f"{label} · {seconds} วินาที", expanded=True, state="running"):
         _render_log(lines)
         st.caption("รันเบื้องหลัง ไปหน้าอื่นระหว่างรอได้ เสร็จแล้วระบบเปิดผลให้เอง")

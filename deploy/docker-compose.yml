@@ -1,0 +1,73 @@
+# ชุดสำหรับขึ้นเซิร์ฟเวอร์จาก image บน Docker Hub (ไม่ต้องมีโค้ด) · ฝังอยู่ใน image ที่ /app/deploy
+# ดึงออกมาด้วยคำสั่งใน DEPLOY.md แล้ว: cp .env.example .env → แก้ .env → docker compose up -d
+# ฐานข้อมูล (DATABASE_URL ใน .env): RDS ใส่ URL ของ RDS · container db ใช้ docker compose --profile localdb up -d
+#   · เว้นว่าง = SQLite ใน volume app_data (แบบเดิม)
+# เปิด OCR: เพิ่ม --profile ocr และใส่ OCR_URL=http://ocr:8000 ใน .env
+# (ไฟล์ docker-compose.yml ที่โฟลเดอร์หลักของโค้ดเป็นแบบ build เอง ใช้ตอนพัฒนา)
+x-logging: &logging  # log ของ docker ไม่เกิน 30 MB ต่อ container ไม่ให้ดิสก์เต็ม
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+x-app: &app
+  image: ${APP_IMAGE:-quix07/competitor-app:__VERSION__}
+  env_file: .env
+  volumes: ["app_data:/app/data"]
+  depends_on:
+    db: { condition: service_healthy, required: false }  # ใช้ RDS หรือ SQLite (ไม่เปิด profile localdb) ก็ขึ้นได้
+  logging: *logging
+  restart: unless-stopped
+
+services:
+  proxy:
+    image: caddy:2
+    ports: ["${HTTP_PORT:-80}:80", "${HTTPS_PORT:-443}:443"]
+    # BASIC_AUTH_HASH ใน .env ว่าง = Caddyfile (ไม่มีรหัส ทุกคนเข้าได้) · มีค่า = Caddyfile.auth (ต้องใส่รหัส)
+    volumes: ["./Caddyfile${BASIC_AUTH_HASH:+.auth}:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+    env_file: .env
+    environment:  # ค่าว่างใน .env = ใช้ค่าเริ่ม (Caddy ใช้ค่าเริ่มเฉพาะตอนไม่มีตัวแปร ไม่ใช่ตอนค่าว่าง)
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-admin}
+    depends_on: [web]
+    logging: *logging
+    restart: unless-stopped
+
+  web:
+    <<: *app
+
+  worker:
+    <<: *app
+    command: ["python", "worker.py"]
+    healthcheck:
+      disable: true
+
+  db:
+    image: pgvector/pgvector:pg16
+    profiles: ["localdb"]
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_DB: competitor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      TZ: Asia/Bangkok
+    volumes: ["pg_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d competitor"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: *logging
+    restart: unless-stopped
+
+  ocr:
+    image: ${OCR_IMAGE:-quix07/competitor-ocr:__VERSION__}
+    profiles: ["ocr"]
+    deploy:
+      resources:
+        limits: { cpus: "1.5", memory: 1.5g }
+    logging: *logging
+    restart: unless-stopped
+
+volumes:
+  app_data:
+  pg_data:
+  caddy_data:
+  caddy_config:

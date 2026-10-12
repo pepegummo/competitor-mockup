@@ -1,0 +1,12 @@
+# แบบมีรหัสผ่าน: compose ใช้ไฟล์นี้เมื่อ BASIC_AUTH_HASH ใน .env มีค่า (ว่าง = ใช้ Caddyfile ที่ไม่มีรหัส)
+# สร้าง hash: docker run --rm caddy:2 caddy hash-password --plaintext 'รหัสผ่าน'
+# SITE_ADDRESS: ชื่อโดเมน (เช่น 1-2-3-4.sslip.io) = Caddy ขอ HTTPS จาก Let's Encrypt ให้เอง
+#               ไม่ตั้ง = :80 (HTTP ธรรมดา ใช้ทดสอบบนเครื่อง)
+{$SITE_ADDRESS::80} {
+	basic_auth {
+		{$BASIC_AUTH_USER:admin} {$BASIC_AUTH_HASH}
+	}
+	encode gzip
+	# Streamlit ใช้ websocket: reverse_proxy ของ Caddy ส่งต่อให้เอง
+	reverse_proxy web:8501
+}

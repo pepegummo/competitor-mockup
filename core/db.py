@@ -1,16 +1,30 @@
+"""ฐานข้อมูลของทั้งแอป: ทุกคำสั่ง SQL อยู่ในไฟล์นี้ ไฟล์อื่นเรียกผ่านฟังก์ชันเท่านั้น
+ตั้ง DATABASE_URL (postgresql://...) = ใช้ PostgreSQL (RDS หรือ container db) · ไม่ตั้ง = SQLite ไฟล์ data/app.db (เดโม/เทส)
+SQL เขียนแบบเดียวใช้ได้ทั้งสองแบบ (ใช้ ? เป็นตัวแทนค่า) ยกเว้นจุดที่แยกด้วย _pg()"""
+import atexit
 import json
+import logging
 import os
 import random
+import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 
+load_dotenv()
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("CC_DATA_DIR") or ROOT / "data")  # ตั้ง CC_DATA_DIR เพื่อทดสอบกับข้อมูลชุดอื่น
 DB_PATH = DATA_DIR / "app.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companies (
@@ -103,7 +117,7 @@ CREATE INDEX IF NOT EXISTS llm_log_hash ON llm_log(hash);
 
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY,
-  status TEXT,           -- 'running' | 'done' | 'error'
+  status TEXT,           -- 'queued' (รอ worker.py ใน docker) | 'running' | 'done' | 'error'
   config_json TEXT,      -- companies, self_name, mode, opts, focus, groups
   log TEXT,              -- บรรทัดความคืบหน้า (แสดงในแอประหว่างรัน)
   run_id INTEGER,
@@ -135,10 +149,77 @@ CREATE TABLE IF NOT EXISTS embeddings (
 """
 
 
+def _pg():
+    return bool(DATABASE_URL)
+
+
+class Row(dict):
+    """แถวจาก PostgreSQL ที่อ่านได้ทั้ง r["name"] และ r[0] เหมือน sqlite3.Row"""
+
+    def __getitem__(self, key):
+        return list(self.values())[key] if isinstance(key, int) else super().__getitem__(key)
+
+
+def _row_factory(cursor):
+    names = [c.name for c in cursor.description or []]
+    return lambda values: Row(zip(names, values))
+
+
+@lru_cache(maxsize=512)
+def _pg_sql(sql):
+    return sql.replace("%", "%%").replace("?", "%s")
+
+
+def _clean(value):
+    if isinstance(value, np.generic):  # ตัวเลขจาก pandas/numpy
+        return value.item()
+    # PostgreSQL เก็บตัวอักษร NUL ใน text ไม่ได้ (ข่าวบางเว็บมี)
+    return value.replace("\x00", "") if isinstance(value, str) else value
+
+
+class _PgConn:
+    """connection ของ psycopg ที่ใช้เหมือน sqlite3: execute / executemany รับตัวแทนค่า ?"""
+
+    def __init__(self, conn):
+        self.raw = conn
+
+    def execute(self, sql, params=()):
+        return self.raw.execute(_pg_sql(sql), [_clean(p) for p in params])
+
+    def executemany(self, sql, rows):
+        cur = self.raw.cursor()
+        cur.executemany(_pg_sql(sql), [[_clean(p) for p in r] for r in rows])
+        return cur
+
+
+_pools = {}
+_pool_lock = threading.Lock()
+
+
+def _pool():
+    """connection pool ต่อ process (เปิด connection ใหม่ทุกคำสั่งช้าเกินไปสำหรับ PostgreSQL)"""
+    with _pool_lock:
+        if DATABASE_URL not in _pools:
+            from psycopg_pool import ConnectionPool  # ลงไว้เสมอ แต่ import เฉพาะตอนใช้ PostgreSQL
+            _pools[DATABASE_URL] = ConnectionPool(DATABASE_URL, min_size=1, max_size=10, open=True,
+                                                  kwargs={"row_factory": _row_factory})
+        return _pools[DATABASE_URL]
+
+
+@atexit.register
+def _close_pools():
+    for pool in _pools.values():
+        pool.close()
+
+
 @contextmanager
 def connect():
-    """เปิด connection, commit เมื่อสำเร็จ แล้วปิดเสมอ"""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    """เปิด connection, commit เมื่อสำเร็จ (rollback เมื่อ error) แล้วปิด/คืน pool เสมอ"""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)  # log และข้อมูลดิบอยู่ในโฟลเดอร์นี้ แม้ DB จะเป็น PostgreSQL
+    if _pg():
+        with _pool().connection() as conn:
+            yield _PgConn(conn)
+        return
     conn = sqlite3.connect(DB_PATH, timeout=30)  # ดึง/จัดหมวดหลายเธรดพร้อมกัน: รอ lock แทนการ error
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -147,6 +228,14 @@ def connect():
             yield conn
     finally:
         conn.close()
+
+
+def _df(conn, sql, params=()):
+    """ผล SELECT เป็น DataFrame ใช้ได้ทั้งสองแบบ (pd.read_sql_query รับ connection ที่ห่อไว้ไม่ได้)"""
+    cur = conn.execute(sql, params)
+    cols = [c[0] for c in cur.description]
+    rows = [list(r.values()) if isinstance(r, dict) else list(r) for r in cur.fetchall()]
+    return pd.DataFrame.from_records(rows, columns=cols, coerce_float=True)
 
 
 def now():
@@ -162,14 +251,55 @@ MIGRATIONS = {
 }
 
 
+def _pg_schema(vector):
+    """SCHEMA แบบ PostgreSQL: id เลขรันอัตโนมัติ · REAL ของ PostgreSQL ละเอียดแค่ 6 หลัก · เวกเตอร์เป็น vector หรือ bytea"""
+    schema = re.sub(r"(?m)^(\s*)id INTEGER PRIMARY KEY", r"\1id SERIAL PRIMARY KEY", SCHEMA)
+    return schema.replace(" REAL", " DOUBLE PRECISION").replace("vec BLOB", "vec vector" if vector else "vec BYTEA")
+
+
+def _create_vector(conn):
+    import psycopg
+    try:
+        with conn.raw.transaction():  # savepoint: สร้างไม่ได้ก็ทำต่อได้ใน transaction เดิม
+            conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        return True
+    except psycopg.Error as e:
+        log.warning("เปิด pgvector ไม่ได้ (%s) เก็บเวกเตอร์เป็น bytes และคิดความใกล้ด้วย numpy แทน", e)
+        return False
+
+
 def init_db():
     with connect() as conn:
+        if _pg():
+            conn.execute("SELECT pg_advisory_xact_lock(7203)")  # web กับ worker เริ่มพร้อมกัน: สร้างตารางทีละตัว
+            conn.raw.execute(_pg_schema(_create_vector(conn)))  # หลายคำสั่งในครั้งเดียว ส่งได้เมื่อไม่มีตัวแทนค่า
+            for table, cols in MIGRATIONS.items():
+                for col, typ in cols.items():
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typ}")
+            return
         conn.executescript(SCHEMA)
         for table, cols in MIGRATIONS.items():
             have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
             for col, typ in cols.items():
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+
+
+def has_vector():
+    """ค้นด้วยความหมายใน DB ได้ไหม: PostgreSQL ที่คอลัมน์ embeddings.vec เป็นชนิด vector (pgvector)"""
+    if not _pg():
+        return False
+    if DATABASE_URL not in _vector_cols:
+        with connect() as conn:
+            row = conn.execute("SELECT udt_name FROM information_schema.columns WHERE table_schema = current_schema() "
+                               "AND table_name = 'embeddings' AND column_name = 'vec'").fetchone()
+        if not row:
+            return False  # ยังไม่ได้ init_db: ไม่จำค่า
+        _vector_cols[DATABASE_URL] = row["udt_name"] == "vector"
+    return _vector_cols[DATABASE_URL]
+
+
+_vector_cols = {}
 
 
 def upsert_company(name, role="competitor", website=None, origin="user"):
@@ -191,10 +321,10 @@ def insert_document(company_id, source_type, url, title, published_at, content_h
     """คืน True ถ้าเพิ่มแถวใหม่, False ถ้า hash ซ้ำ (ข้าม)"""
     with connect() as conn:
         cur = conn.execute(
-            """INSERT OR IGNORE INTO documents
+            """INSERT INTO documents
                (company_id, source_type, url, title, published_at, content_hash, raw_path, fetched_at,
                 source_name, content, rating)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""",
             (company_id, source_type, url, title, published_at, content_hash, raw_path, now(),
              source_name, content, rating),
         )
@@ -240,7 +370,7 @@ def update_company_sources(name, aliases=None, play_app_id=None, appstore_id=Non
                            set_symbol=None, appstore_name=None, play_name=None):
     """บันทึกการตั้งค่าแหล่งข้อมูลของบริษัท (สร้างบริษัทถ้ายังไม่มี)"""
     with connect() as conn:
-        conn.execute("INSERT OR IGNORE INTO companies (name, role, origin) VALUES (?, 'competitor', 'user')",
+        conn.execute("INSERT INTO companies (name, role, origin) VALUES (?, 'competitor', 'user') ON CONFLICT DO NOTHING",
                      (name,))
         conn.execute(
             # set_symbol: NULL = ยังไม่เคยหา (ระบบจะหาให้ตอนวิเคราะห์), '' = ไม่อยู่ในตลาด/ผู้ใช้ลบออก
@@ -257,7 +387,7 @@ def update_company_sources(name, aliases=None, play_app_id=None, appstore_id=Non
 def set_disabled_sources(name, keys):
     """แหล่งที่ปิดไว้เฉพาะบริษัทนี้ (key จาก collect.SOURCES และ "financials")"""
     with connect() as conn:
-        conn.execute("INSERT OR IGNORE INTO companies (name, role, origin) VALUES (?, 'competitor', 'user')",
+        conn.execute("INSERT INTO companies (name, role, origin) VALUES (?, 'competitor', 'user') ON CONFLICT DO NOTHING",
                      (name,))
         conn.execute("UPDATE companies SET disabled_sources = ? WHERE name = ?",
                      (json.dumps(sorted(set(keys))), name))
@@ -355,7 +485,8 @@ def facts_df(company_ids):
     if not company_ids:
         return pd.DataFrame()
     with connect() as conn:
-        return pd.read_sql_query(
+        return _df(
+            conn,
             f"""SELECT c.name AS company, f.category, f.sentiment, f.summary,
                        d.title, d.url, d.published_at,
                        COALESCE(d.source_type, 'news') AS source_type,
@@ -365,8 +496,7 @@ def facts_df(company_ids):
                 JOIN companies c ON c.id = f.company_id
                 WHERE f.company_id IN ({_in(company_ids)})
                   AND f.category != 'irrelevant'  -- ข่าวที่ชื่อตรงแต่ไม่ใช่เรื่องของบริษัทนี้""",
-            conn,
-            params=company_ids,
+            company_ids,
         )
 
 
@@ -438,17 +568,17 @@ def latest_report(mode):
 def save_report(mode, content_md):
     with connect() as conn:
         return conn.execute(
-            "INSERT INTO reports (mode, created_at, content_md) VALUES (?, ?, ?)",
+            "INSERT INTO reports (mode, created_at, content_md) VALUES (?, ?, ?) RETURNING id",
             (mode, now(), content_md),
-        ).lastrowid
+        ).fetchone()["id"]
 
 
 # ---------- ติดตามอัตโนมัติ ----------
 
 def save_watchlist(name, config):
     with connect() as conn:
-        return conn.execute("INSERT INTO watchlists (name, created_at, config_json) VALUES (?, ?, ?)",
-                            (name, now(), json.dumps(config, ensure_ascii=False))).lastrowid
+        return conn.execute("INSERT INTO watchlists (name, created_at, config_json) VALUES (?, ?, ?) RETURNING id",
+                            (name, now(), json.dumps(config, ensure_ascii=False))).fetchone()["id"]
 
 
 def watchlists():
@@ -475,10 +605,10 @@ def save_run(started_at, config, snapshot, changes, report_id, watch_id=None):
     with connect() as conn:
         return conn.execute(
             """INSERT INTO runs (watch_id, started_at, config_json, snapshot_json, changes_json, report_id)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
             (watch_id, started_at, json.dumps(config, ensure_ascii=False),
              json.dumps(snapshot, ensure_ascii=False), json.dumps(changes, ensure_ascii=False), report_id),
-        ).lastrowid
+        ).fetchone()["id"]
 
 
 def get_run(run_id):
@@ -513,21 +643,21 @@ def save_internal(rows):
     with connect() as conn:
         conn.executemany(
             """INSERT INTO internal_metrics (company, metric, value, unit, period, uploaded_at)
-               VALUES (:company, :metric, :value, :unit, :period, :uploaded_at)
+               VALUES (?, ?, ?, ?, ?, ?)
                ON CONFLICT(company, metric) DO UPDATE SET value = excluded.value, unit = excluded.unit,
                  period = excluded.period, uploaded_at = excluded.uploaded_at""",
-            [{**r, "uploaded_at": now()} for r in rows],
+            [(r["company"], r["metric"], r["value"], r["unit"], r["period"], now()) for r in rows],
         )
 
 
 def internal_metrics(names=None):
     with connect() as conn:
         if names is None:
-            return pd.read_sql_query("SELECT * FROM internal_metrics ORDER BY company, metric", conn)
+            return _df(conn, "SELECT * FROM internal_metrics ORDER BY company, metric")
         if not names:
             return pd.DataFrame()
-        return pd.read_sql_query(f"SELECT * FROM internal_metrics WHERE company IN ({_in(names)}) "
-                                 "ORDER BY company, metric", conn, params=list(names))
+        return _df(conn, f"SELECT * FROM internal_metrics WHERE company IN ({_in(names)}) ORDER BY company, metric",
+                   list(names))
 
 
 def clear_internal():
@@ -538,10 +668,11 @@ def clear_internal():
 def uploaded_documents():
     """PDF ที่อัปโหลดไว้ หนึ่งแถวต่อ (ไฟล์, บริษัท): source_name, company, parts, uploaded_at"""
     with connect() as conn:
-        return pd.read_sql_query(
+        return _df(
+            conn,
             """SELECT d.source_name, c.name AS company, COUNT(*) AS parts, MAX(d.fetched_at) AS uploaded_at
                FROM documents d JOIN companies c ON c.id = d.company_id
-               WHERE d.source_type = 'document' GROUP BY d.source_name, c.name ORDER BY uploaded_at DESC""", conn)
+               WHERE d.source_type = 'document' GROUP BY d.source_name, c.name ORDER BY uploaded_at DESC""")
 
 
 def delete_uploaded(source_name, company):
@@ -574,29 +705,64 @@ def get_cache(keys, max_age_hours=None):
 
 def set_cache(key, data):
     with connect() as conn:
-        conn.execute("INSERT OR REPLACE INTO market_cache (key, fetched_at, data_json) VALUES (?, ?, ?)",
-                      (key, now(), json.dumps(data, ensure_ascii=False)))
+        conn.execute("""INSERT INTO market_cache (key, fetched_at, data_json) VALUES (?, ?, ?)
+                        ON CONFLICT(key) DO UPDATE SET fetched_at = excluded.fetched_at, data_json = excluded.data_json""",
+                     (key, now(), json.dumps(data, ensure_ascii=False)))
 
 
 # ---------- embeddings (ค้นด้วยความหมายในแท็บถามข้อมูล) ----------
+# เวกเตอร์ส่งเข้าออกเป็น bytes ของ float32 · pgvector รับ/คืนเป็นข้อความ "[0.1,0.2,...]"
+
+def _to_vector(vec_bytes):
+    return json.dumps(np.frombuffer(vec_bytes, dtype=np.float32).tolist())
+
+
+def _from_vector(text):
+    return np.asarray(json.loads(text), dtype=np.float32).tobytes()
+
+
+def _by_hash(sql, hashes):
+    """รันคำสั่งที่มี {in} กับ hash ทีละ 900 ตัว (SQLite จำกัดจำนวน ? ต่อคำสั่ง)"""
+    hashes = list(hashes)
+    with connect() as conn:
+        for i in range(0, len(hashes), 900):
+            part = hashes[i:i + 900]
+            yield from conn.execute(sql.format(**{"in": _in(part)}), part).fetchall()
+
+
+def embedding_hashes(hashes):
+    """hash ที่มีเวกเตอร์แล้ว (ไม่โหลดเวกเตอร์)"""
+    return {r["hash"] for r in _by_hash("SELECT hash FROM embeddings WHERE hash IN ({in})", hashes)}
+
 
 def get_embeddings(hashes):
     """{hash: bytes} ของเวกเตอร์ที่เคยคำนวณแล้ว"""
-    out = {}
-    hashes = list(hashes)
-    with connect() as conn:
-        for i in range(0, len(hashes), 900):  # SQLite จำกัดจำนวน ? ต่อคำสั่ง
-            part = hashes[i:i + 900]
-            out.update({r["hash"]: r["vec"] for r in
-                        conn.execute(f"SELECT hash, vec FROM embeddings WHERE hash IN ({_in(part)})", part)})
-    return out
+    if has_vector():
+        return {r["hash"]: _from_vector(r["vec"])
+                for r in _by_hash("SELECT hash, vec::text AS vec FROM embeddings WHERE hash IN ({in})", hashes)}
+    return {r["hash"]: bytes(r["vec"]) for r in _by_hash("SELECT hash, vec FROM embeddings WHERE hash IN ({in})", hashes)}
 
 
 def save_embeddings(vecs, model):
     """vecs = {hash: bytes}"""
+    vector = has_vector()
     with connect() as conn:
-        conn.executemany("INSERT OR REPLACE INTO embeddings (hash, model, vec, created_at) VALUES (?, ?, ?, ?)",
-                         [(h, model, v, now()) for h, v in vecs.items()])
+        conn.executemany(
+            f"""INSERT INTO embeddings (hash, model, vec, created_at) VALUES (?, ?, {'?::vector' if vector else '?'}, ?)
+                ON CONFLICT(hash) DO UPDATE SET model = excluded.model, vec = excluded.vec,
+                  created_at = excluded.created_at""",
+            [(h, model, _to_vector(v) if vector else v, now()) for h, v in vecs.items()])
+
+
+def embedding_scores(query, hashes):
+    """{hash: cosine กับ query (bytes)} คิดใน PostgreSQL ด้วย pgvector · None = ไม่มี pgvector ให้คิดด้วย numpy
+    คิดทุกรายการที่ส่งมา (ไม่ใช้ index แบบ top-k) เพราะ ask.py ใช้คะแนนของทุกรายการ"""
+    if not has_vector():
+        return None
+    with connect() as conn:
+        rows = conn.execute("SELECT hash, 1 - (vec <=> ?::vector) AS sim FROM embeddings WHERE hash = ANY(?)",
+                            (_to_vector(query), list(hashes))).fetchall()
+    return {r["hash"]: float(r["sim"]) for r in rows}
 
 
 # ---------- llm_log ----------
@@ -619,15 +785,33 @@ def llm_stats(since=None):
     with connect() as conn:
         row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(ms), 0) AS ms FROM llm_log WHERE created_at >= ?",
                            (since or "",)).fetchone()
-    return {"calls": row["n"], "seconds": round(row["ms"] / 1000, 1)}
+    return {"calls": int(row["n"]), "seconds": round(int(row["ms"]) / 1000, 1)}  # int: PostgreSQL คืน SUM เป็น Decimal
 
 
 # ---------- jobs (วิเคราะห์เบื้องหลัง) ----------
 
-def create_job(config):
+def create_job(config, status="running"):
     with connect() as conn:
-        return conn.execute("INSERT INTO jobs (status, config_json, log, started_at) VALUES ('running', ?, '', ?)",
-                            (json.dumps(config, ensure_ascii=False), now())).lastrowid
+        return conn.execute("INSERT INTO jobs (status, config_json, log, started_at) VALUES (?, ?, '', ?) RETURNING id",
+                            (status, json.dumps(config, ensure_ascii=False), now())).fetchone()["id"]
+
+
+def claim_job():
+    """worker หยิบงาน queued ที่เก่าสุด 1 งานเปลี่ยนเป็น running (คำสั่งเดียว จึงไม่หยิบซ้ำ) คืน id หรือ None
+    PostgreSQL: SKIP LOCKED ให้ worker หลายตัวหยิบคนละงานได้โดยไม่รอกัน"""
+    lock = " FOR UPDATE SKIP LOCKED" if _pg() else ""
+    with connect() as conn:
+        row = conn.execute("UPDATE jobs SET status = 'running', started_at = ? WHERE status = 'queued' AND id = "
+                           f"(SELECT id FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1{lock}) RETURNING id",
+                           (now(),)).fetchone()
+    return row["id"] if row else None
+
+
+def fail_running_jobs(error):
+    """งานที่ค้าง running ตอน worker เริ่มใหม่ (container ถูกรีสตาร์ทกลางงาน) ให้หน้าเว็บรู้ว่าไม่สำเร็จ"""
+    with connect() as conn:
+        return conn.execute("UPDATE jobs SET status = 'error', error = ?, finished_at = ? WHERE status = 'running'",
+                            (error, now())).rowcount
 
 
 def append_job_log(job_id, line):
@@ -665,7 +849,8 @@ def label_queue(limit=20, company_ids=None):
     where = f"AND f.company_id IN ({_in(company_ids)})" if company_ids else ""
     query = f"""SELECT {_LABEL_COLS} {_LABEL_FROM}
                 WHERE COALESCE(d.source_type, 'news') IN ('news', 'rss') {where}
-                  AND f.id NOT IN (SELECT fact_id FROM labels) AND (f.category = 'irrelevant') = ?
+                  AND f.id NOT IN (SELECT fact_id FROM labels)
+                  AND CASE WHEN f.category = 'irrelevant' THEN 1 ELSE 0 END = ?
                 ORDER BY random() LIMIT ?"""
     with connect() as conn:
         dropped = conn.execute(query, [*(company_ids or []), 1, max(limit // 3, 1)]).fetchall()
@@ -677,26 +862,30 @@ def label_queue(limit=20, company_ids=None):
 
 def save_label(fact_id, relevant, category=None, sentiment=None):
     with connect() as conn:
-        conn.execute("INSERT OR REPLACE INTO labels (fact_id, relevant, category, sentiment, labeled_at) "
-                     "VALUES (?, ?, ?, ?, ?)", (fact_id, int(relevant), category, sentiment, now()))
+        conn.execute("""INSERT INTO labels (fact_id, relevant, category, sentiment, labeled_at) VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(fact_id) DO UPDATE SET relevant = excluded.relevant, category = excluded.category,
+                          sentiment = excluded.sentiment, labeled_at = excluded.labeled_at""",
+                     (fact_id, int(relevant), category, sentiment, now()))
 
 
 def labels_df():
     """ผลของระบบเทียบกับที่ผู้ใช้ตรวจ หนึ่งแถวต่อข่าวที่ตรวจแล้ว"""
     with connect() as conn:
-        return pd.read_sql_query(
+        return _df(
+            conn,
             f"""SELECT {_LABEL_COLS}, l.relevant AS human_relevant, l.category AS human_category,
                        l.sentiment AS human_sentiment, l.labeled_at
-                {_LABEL_FROM} JOIN labels l ON l.fact_id = f.id ORDER BY l.labeled_at""", conn)
+                {_LABEL_FROM} JOIN labels l ON l.fact_id = f.id ORDER BY l.labeled_at""")
 
 
 def label_population():
     """จำนวนข่าวที่ค้นด้วยชื่อทั้งหมด แยกที่ระบบเก็บไว้/ตัดออก (ใช้ประมาณ recall จากตัวอย่าง)"""
     with connect() as conn:
         row = conn.execute(
-            f"""SELECT SUM(f.category != 'irrelevant') AS kept, SUM(f.category = 'irrelevant') AS dropped
+            f"""SELECT SUM(CASE WHEN f.category != 'irrelevant' THEN 1 ELSE 0 END) AS kept,
+                       SUM(CASE WHEN f.category = 'irrelevant' THEN 1 ELSE 0 END) AS dropped
                 {_LABEL_FROM} WHERE COALESCE(d.source_type, 'news') IN ('news', 'rss')""").fetchone()
-    return {"kept": row["kept"] or 0, "dropped": row["dropped"] or 0}
+    return {"kept": int(row["kept"] or 0), "dropped": int(row["dropped"] or 0)}
 
 
 def label_examples(company=None, limit=6):
@@ -704,8 +893,8 @@ def label_examples(company=None, limit=6):
     with connect() as conn:
         rows = conn.execute(
             f"""SELECT c.name AS company, d.title, l.relevant, l.category, l.sentiment,
-                       (f.category = 'irrelevant') != (l.relevant = 0) AS wrong_relevance,
-                       (l.category IS NOT NULL AND l.category != f.category) AS wrong_category
+                       CASE WHEN (f.category = 'irrelevant') != (l.relevant = 0) THEN 1 ELSE 0 END AS wrong_relevance,
+                       CASE WHEN l.category IS NOT NULL AND l.category != f.category THEN 1 ELSE 0 END AS wrong_category
                 {_LABEL_FROM} JOIN labels l ON l.fact_id = f.id
                 WHERE (f.category = 'irrelevant') != (l.relevant = 0) OR l.relevant = 0
                    OR (l.category IS NOT NULL AND l.category != f.category)
@@ -761,7 +950,10 @@ def merge_companies(keep, others):
                 conn.execute("DELETE FROM financials WHERE company_id = ?", (oid,))
             else:
                 conn.execute("UPDATE financials SET company_id = ? WHERE company_id = ?", (keep_id, oid))
-            conn.execute("UPDATE OR IGNORE internal_metrics SET company = ? WHERE company = ?", (keep, name))
+            # ตัวชี้วัดที่ keep มีอยู่แล้วไม่ย้าย (ใช้ค่าของ keep) แถวที่เหลือของ name ถูกลบในบรรทัดถัดไป
+            conn.execute("""UPDATE internal_metrics SET company = ? WHERE company = ?
+                            AND metric NOT IN (SELECT metric FROM internal_metrics WHERE company = ?)""",
+                         (keep, name, keep))
             conn.execute("DELETE FROM internal_metrics WHERE company = ?", (name,))
             conn.execute("DELETE FROM companies WHERE id = ?", (oid,))
         aliases = keep_row["aliases"] + [o for o in others if o not in keep_row["aliases"]]

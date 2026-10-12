@@ -1,4 +1,4 @@
-"""รันชุดติดตามทั้งหมดโดยไม่ต้องเปิดแอป (Windows Task Scheduler เรียกไฟล์นี้ตามเวลาที่ตั้งในแอป)
+"""รันชุดติดตามทั้งหมดโดยไม่ต้องเปิดแอป (Windows Task Scheduler เรียกไฟล์นี้ตามเวลาที่ตั้งในแอป · ใน docker ใช้ worker.py)
     python monitor.py            รันทุกชุด
     python monitor.py --id 3     รันเฉพาะชุดที่ 3
     python monitor.py --test-alert  ทดสอบส่งแจ้งเตือน
@@ -56,6 +56,14 @@ def run_job(job_id):
     if not job:
         return
     cfg = job["config"]
+    if "watch_id" in cfg:  # ปุ่ม “รันตอนนี้” ของชุดติดตาม (ใน docker ส่งผ่านตาราง jobs แทน --id)
+        try:
+            run_all(cfg["watch_id"])
+            db.finish_job(job_id)
+        except Exception as e:
+            log(traceback.format_exc())
+            db.finish_job(job_id, error=f"{type(e).__name__}: {e}")
+        return
 
     def job_log(text, kind="line"):
         db.append_job_log(job_id, f"{kind}|{text}")
@@ -71,6 +79,18 @@ def run_job(job_id):
         db.finish_job(job_id, error=f"{type(e).__name__}: {e}")
 
 
+def run_all(watch_id=None):
+    """รันทุกชุดติดตาม หรือเฉพาะ watch_id"""
+    watches = [w for w in db.watchlists() if watch_id is None or w["id"] == watch_id]
+    if not watches:
+        log(f"ไม่พบชุดติดตามที่ {watch_id}" if watch_id else "ยังไม่มีชุดติดตาม บันทึกได้จาก “ติดตามอัตโนมัติ” ในแอป")
+    for w in watches:
+        try:
+            run_watch(w)
+        except Exception:  # ชุดหนึ่งพังไม่ให้ชุดอื่นหยุด
+            log(traceback.format_exc())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", type=int)
@@ -84,14 +104,7 @@ def main():
     if args.test_alert:
         print(monitor.send_alert("📊 Competitor Compare: ทดสอบการแจ้งเตือน")[1])
         return
-    watches = [w for w in db.watchlists() if args.id is None or w["id"] == args.id]
-    if not watches:
-        log(f"ไม่พบชุดติดตามที่ {args.id}" if args.id else "ยังไม่มีชุดติดตาม บันทึกได้จาก “ติดตามอัตโนมัติ” ในแอป")
-    for w in watches:
-        try:
-            run_watch(w)
-        except Exception:  # ชุดหนึ่งพังไม่ให้ชุดอื่นหยุด
-            log(traceback.format_exc())
+    run_all(args.id)
 
 
 if __name__ == "__main__":

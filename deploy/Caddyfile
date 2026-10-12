@@ -1,0 +1,9 @@
+# ค่าเริ่ม: ไม่มีรหัสผ่าน ทุกคนที่มีลิงก์เข้าได้ (ช่วง mock-up)
+# เปิดรหัสผ่าน: ใส่ BASIC_AUTH_HASH ใน .env แล้ว docker compose up -d → compose ใช้ Caddyfile.auth แทนไฟล์นี้ (ดู DEPLOY.md)
+# SITE_ADDRESS: ชื่อโดเมน (เช่น 1-2-3-4.sslip.io) = Caddy ขอ HTTPS จาก Let's Encrypt ให้เอง
+#               ไม่ตั้ง = :80 (HTTP ธรรมดา ใช้ทดสอบบนเครื่อง)
+{$SITE_ADDRESS::80} {
+	encode gzip
+	# Streamlit ใช้ websocket: reverse_proxy ของ Caddy ส่งต่อให้เอง
+	reverse_proxy web:8501
+}

@@ -14,3 +14,5 @@ python-docx
 pymupdf  # อ่าน PDF ที่อัปโหลด
 pytesseract  # OCR ในเครื่อง (ต้องลง Tesseract + ภาษาไทยเอง) · ไม่ลงก็ได้ถ้าใช้ container ocr ผ่าน OCR_URL
 sentence-transformers  # ค้นด้วยความหมายในแท็บถามข้อมูล (torch แบบ CPU: pip install torch --index-url https://download.pytorch.org/whl/cpu)
+psycopg[binary]  # PostgreSQL เมื่อตั้ง DATABASE_URL (ไม่ตั้ง = SQLite)
+psycopg-pool
