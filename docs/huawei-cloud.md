@@ -4,7 +4,9 @@
 ฐานข้อมูลแยกไปใช้ RDS PostgreSQL + pgvector · LLM ยังใช้ endpoint ของอาจารย์ · embedding (e5) รันใน container
 ภาพรวมของระบบตอนนี้ดู [`architecture.md`](architecture.md)
 
-> **สถานะ:** เป็นแบบ ยังไม่ได้สร้างจริง และโค้ดยังต้องแก้ตาม [สิ่งที่ต้องแก้ในโค้ด](#สิ่งที่ต้องแก้ในโค้ดก่อนขึ้นจริง) ก่อน
+> **สถานะ:** เฟส 1 (Docker Compose + worker + Caddy) **ทำแล้ว** · เฟส 2 ส่วนฐานข้อมูล (PostgreSQL + pgvector, สคริปต์ย้ายข้อมูล) **ทำแล้ว**
+> ตั้ง `DATABASE_URL` ชี้ RDS หรือใช้ container `db` (`--profile localdb`) ไม่ตั้ง = SQLite แบบเดิม · ขั้นตอนอยู่ใน [`DEPLOY.md`](../DEPLOY.md)
+> ที่ยังไม่ทำ: ไฟล์ไป OBS (ตัดสินใจเก็บใน volume บน ECS ไปก่อน) · ยังไม่ได้สร้าง resource บน Huawei Cloud
 
 **Region:** AP-Bangkok (`ap-southeast-2`) ข้อมูลอยู่ในไทย และใกล้ผู้ใช้/แหล่งข่าวไทย
 
@@ -12,12 +14,12 @@
 
 ```mermaid
 flowchart LR
-    USER["ผู้ใช้<br/>เบราว์เซอร์"] -->|"HTTPS + รหัสผ่าน"| EIP["EIP"]
+    USER["ผู้ใช้<br/>เบราว์เซอร์"] -->|"HTTPS (+ รหัสผ่านถ้าตั้ง)"| EIP["EIP"]
     subgraph VPC["VPC · AP-Bangkok"]
         subgraph ECS["ECS · Docker Compose"]
-            PROXY["proxy<br/>Caddy: HTTPS + basic auth"]
+            PROXY["proxy<br/>Caddy: HTTPS + basic auth (ไม่บังคับ)"]
             WEB["web<br/>Streamlit app.py"]
-            WORKER["worker<br/>cron รายวัน + หยิบงานจากตาราง jobs"]
+            WORKER["worker<br/>รันรายวันตาม MONITOR_AT + หยิบงานจากตาราง jobs"]
             OCR["ocr<br/>Tesseract tha + pymupdf"]
             PROXY --> WEB
             WEB -->|"PDF ที่อัปโหลด"| OCR
@@ -64,13 +66,14 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 
 | Container | Image | หน้าที่ | พอร์ต |
 |---|---|---|---|
-| `proxy` | `caddy:2` | HTTPS (Let's Encrypt อัตโนมัติ) + basic auth · ส่งต่อ websocket ของ Streamlit | 80, 443 ออกนอก |
+| `proxy` | `caddy:2` | HTTPS (Let's Encrypt อัตโนมัติ) + basic auth เมื่อตั้ง `BASIC_AUTH_HASH` (ว่าง = ไม่มีรหัส ใช้ `deploy/Caddyfile` · มีค่า = `Caddyfile.auth`) · ส่งต่อ websocket ของ Streamlit | 80, 443 ออกนอก |
 | `web` | `competitor-app` | `streamlit run app.py` | 8501 ภายในเท่านั้น |
-| `worker` | `competitor-app` | cron (supercronic) รัน `monitor.py` ทุกวัน · วนอ่านตาราง `jobs` ที่รออยู่แล้วรัน `monitor.py --job <id>` | – |
+| `worker` | `competitor-app` | `python worker.py`: ทุก 5 วินาทีหยิบงาน `queued` จากตาราง `jobs` (`claim_job`) แล้วรัน `monitor.run_job` · ถึงเวลา `MONITOR_AT` รันทุกชุดติดตามวันละครั้ง · เริ่มใหม่ = ปิดงานที่ค้าง `running` เป็น error | – |
+| `db` (profile `localdb`) | `pgvector/pgvector:pg16` | PostgreSQL + pgvector บน ECS เครื่องเดียวกัน ใช้แทน RDS ตอนทดสอบหรือยังไม่มี RDS | 5432 ภายในเท่านั้น |
 | `ocr` (profile `ocr`) | `competitor-ocr` (build จาก `ocr/`) | `POST /extract` รับ PDF คืนข้อความทีละหน้า: ใช้ข้อความในไฟล์ก่อน OCR (Tesseract `tha+eng`) เฉพาะหน้าที่เป็นภาพหรือข้อความเพี้ยน | 8000 ภายในเท่านั้น |
 
 **image `competitor-app`:** `python:3.12-slim` + torch แบบ CPU + `requirements.txt` + โมเดล `intfloat/multilingual-e5-small`
-ดาวน์โหลดฝังไว้ตอน build (container ไม่ต้องโหลดโมเดลตอนเริ่ม และรันได้แม้ Hugging Face ล่ม) ขนาดราว 2–2.5 GB
+ดาวน์โหลดฝังไว้ตอน build (container ไม่ต้องโหลดโมเดลตอนเริ่ม และรันได้แม้ Hugging Face ล่ม) ดาวน์โหลดราว 1.2 GB · บนดิสก์ราว 4.3 GB
 
 **config ผ่าน env (ไฟล์ `.env` บน ECS):**
 
@@ -83,66 +86,41 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 | `ALERT_WEBHOOK_URL` | ไม่บังคับ |
 | `MONITOR_AT` | เวลารันอัตโนมัติ เช่น `07:00` (เวลาไทย) |
 | `OCR_URL` | `http://ocr:8000` เมื่อเปิด profile `ocr` (เว้นว่าง = อ่านเฉพาะ PDF ที่มีข้อความในไฟล์) |
-| `BASIC_AUTH_USER`, `BASIC_AUTH_HASH` | รหัสเข้าเว็บของ Caddy (`caddy hash-password`) |
+| `BASIC_AUTH_USER`, `BASIC_AUTH_HASH` | รหัสเข้าเว็บของ Caddy (`caddy hash-password`) · ไม่บังคับ: ว่าง = ทุกคนที่มีลิงก์เข้าได้ |
 
-ร่าง `docker-compose.yml` (ยังไม่ได้สร้างไฟล์จริง):
-
-```yaml
-services:
-  proxy:
-    image: caddy:2
-    ports: ["80:80", "443:443"]
-    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data"]
-    env_file: .env
-    depends_on: [web]
-    restart: unless-stopped
-  web:
-    image: swr.ap-southeast-2.myhuaweicloud.com/<org>/competitor-app:<tag>
-    command: streamlit run app.py --server.address=0.0.0.0 --server.port=8501
-    env_file: .env
-    restart: unless-stopped
-  worker:
-    image: swr.ap-southeast-2.myhuaweicloud.com/<org>/competitor-app:<tag>
-    command: python worker.py   # cron รายวัน + หยิบงานจากตาราง jobs
-    env_file: .env
-    restart: unless-stopped
-  ocr:
-    image: swr.ap-southeast-2.myhuaweicloud.com/<org>/competitor-ocr:<tag>
-    profiles: ["ocr"]           # เปิดด้วย docker compose --profile ocr up -d
-    deploy:
-      resources:
-        limits: { cpus: "1.5", memory: 1.5g }   # OCR ใช้ CPU เต็มตอนมีไฟล์ จำกัดไว้ไม่ให้หน้าเว็บช้า
-    restart: unless-stopped
-volumes:
-  caddy_data:
-```
+ไฟล์จริงอยู่ที่ [`docker-compose.yml`](../docker-compose.yml) (`web` กับ `worker` ใช้ image เดียวกัน · ฐานข้อมูลตาม `DATABASE_URL` · ไฟล์ดิบ/อัปโหลด/log อยู่ใน volume `app_data`)
+บน ECS ตั้ง `APP_IMAGE=swr.ap-southeast-2.myhuaweicloud.com/<org>/competitor-app:<tag>` และ `OCR_IMAGE` ใน `.env` แล้ว `docker compose pull`
 
 ## สิ่งที่ต้องแก้ในโค้ดก่อนขึ้นจริง
 
 | # | ไฟล์ | ต้องแก้ |
 |---|---|---|
-| 1 | `core/db.py` | SQLite → PostgreSQL (psycopg): `?` → `%s` · `INSERT OR REPLACE` → `ON CONFLICT` · ตัด `PRAGMA` / `executescript` / `sqlite3.Row` · `INTEGER PRIMARY KEY` → `bigserial` · `MIGRATIONS` ใช้ `ADD COLUMN IF NOT EXISTS` · `CREATE EXTENSION vector` |
-| 2 | `core/embed.py`, `core/ask.py` | ตาราง `embeddings.vec` เป็น `vector(384)` · ค้นด้วย `ORDER BY vec <=> :q` (cosine) แทน numpy · โมเดลยังรันใน container |
-| 3 | `core/collect.py`, `core/internal.py` | `RAW_DIR` / `raw_path` และ PDF ต้นฉบับ (`data/uploads/`, `save_pdf`) เขียนไป OBS (หรือ volume ก่อนในรอบแรก) |
-| 4 | `ui/watch_panel.py`, `app.py` | ตัด `schtasks` (ใช้ได้แค่ Windows) และ `subprocess.Popen` · ปุ่ม "เริ่มวิเคราะห์"/"รันตอนนี้" แค่สร้างแถวใน `jobs` สถานะ `queued` ให้ worker หยิบ · เวลารันรายวันมาจาก `MONITOR_AT` |
-| 5 | ใหม่ `worker.py` | วนทุก 5 วินาที: หยิบงาน `queued` (ใช้ `SELECT … FOR UPDATE SKIP LOCKED`) → รัน `pipeline.run` · ถึงเวลา `MONITOR_AT` → รันชุดติดตามทั้งหมดเหมือน `monitor.py` |
-| 6 | ใหม่ `Dockerfile`, `docker-compose.yml`, `Caddyfile`, `.dockerignore` | `.dockerignore` ต้องตัด `.env`, `data/`, `.venv/`, `.git/` |
-| 7 | ใหม่ สคริปต์ย้ายข้อมูล | copy `data/app.db` (และ `demo/app.db` ถ้าจะใช้โหมดเดโมบน cloud) → PostgreSQL ครั้งเดียว |
+| 1 | `core/db.py` | **ทำแล้ว** · ตั้ง `DATABASE_URL` = PostgreSQL (psycopg + connection pool) ไม่ตั้ง = SQLite · SQL ชุดเดียวใช้ได้ทั้งสองแบบ (`ON CONFLICT`, `RETURNING id`, `CASE` แทน boolean) · schema แปลงตอนสร้าง (`SERIAL`, `DOUBLE PRECISION`, `vector`) · `ADD COLUMN IF NOT EXISTS` · ตัดตัวอักษร NUL ก่อนบันทึก |
+| 2 | `core/embed.py` | **ทำแล้ว** · `embeddings.vec` เป็น `vector` (ไม่ระบุมิติ ใช้ได้ทั้งโมเดล local และ api) · ความใกล้คิดใน DB ด้วย `1 - (vec <=> q)` กับทุกรายการของผลที่เปิดอยู่ (ไม่ใช้ index top-k เพราะ `ask.py` ใช้คะแนนทุกรายการ) · ไม่มี pgvector = เก็บ bytea คิดด้วย numpy |
+| 3 | `core/collect.py`, `core/internal.py` | **ยังไม่ทำ (ตัดสินใจแล้ว)** · ไฟล์ดิบและ PDF ต้นฉบับแอปเขียนเก็บไว้เฉย ๆ ไม่อ่านกลับ จึงเก็บใน volume บน ECS ก่อน ย้ายไป OBS เมื่อจะแยก web/worker หลายเครื่อง |
+| 4 | `ui/watch_panel.py`, `ui/state.py` | **ทำแล้ว** (เมื่อ `CC_JOB_QUEUE=1` ซึ่งตั้งไว้ใน image) · ตัด `schtasks` (ใช้ได้แค่ Windows) และ `subprocess.Popen` · ปุ่ม "เริ่มวิเคราะห์"/"รันตอนนี้" แค่สร้างแถวใน `jobs` สถานะ `queued` ให้ worker หยิบ · เวลารันรายวันมาจาก `MONITOR_AT` |
+| 5 | ใหม่ `worker.py` | **ทำแล้ว** (`UPDATE … RETURNING` · PostgreSQL ใช้ `FOR UPDATE SKIP LOCKED`) · วนทุก 5 วินาที: หยิบงาน `queued` → รัน `pipeline.run` · ถึงเวลา `MONITOR_AT` → รันชุดติดตามทั้งหมดเหมือน `monitor.py` |
+| 6 | ใหม่ `Dockerfile`, `docker-compose.yml`, `Caddyfile`, `.dockerignore` | **ทำแล้ว** · `.dockerignore` ต้องตัด `.env`, `data/`, `.venv/`, `.git/` |
+| 7 | ใหม่ `migrate_to_postgres.py` | **ทำแล้ว** · copy SQLite → PostgreSQL ใน transaction เดียว คง id เดิม ข้ามแถวที่ชี้ข้อมูลที่ไม่มีแล้ว ตั้งเลขรันต่อ · ไม่ย้ายซ้ำถ้ามีบริษัทอยู่แล้ว |
 | 8 | OCR | **ทำแล้ว** สำหรับ PDF ที่อัปโหลดในหน้าข้อมูลภายใน: `ocr/` (FastAPI + pymupdf + Tesseract) เรียกผ่าน `core/ocr.py` ตาม `OCR_URL` · ที่ยังไม่ทำ: ข่าวที่ลิงก์เป็น PDF และงบการเงินจาก SET |
 
-ตาราง `jobs` มี `status` อยู่แล้ว (`running` / `done` / `error`) จึงใช้เป็น queue ได้ แค่เพิ่มสถานะ `queued` ไม่ต้องใช้ DMS
+ตาราง `jobs` ใช้เป็น queue (สถานะ `queued` → `running` → `done` / `error`) ไม่ต้องใช้ DMS · worker เริ่มใหม่จะปิดงานที่ค้าง `running` เป็น `error`
 
 ## ขั้นตอน deploy
 
 1. สร้าง VPC + subnet + Security Group 2 ชุด (ECS, RDS)
-2. สร้าง RDS for PostgreSQL ใน subnet ส่วนตัว → `CREATE EXTENSION vector;` → สร้าง user/database ของแอป
+2. สร้าง RDS for PostgreSQL ใน subnet ส่วนตัว → สร้าง user `app` / database `competitor` → `CREATE EXTENSION vector;` (คำสั่งอยู่ใน `DEPLOY.md`)
 3. สร้าง OBS bucket ส่วนตัว
 4. สร้าง ECS + EIP → ลง Docker + compose plugin → เปิด Cloud Eye agent
 5. บนเครื่องเรา: `docker build` 2 image (`competitor-app` จากโฟลเดอร์หลัก · `competitor-ocr` จาก `ocr/`) → `docker push` ไป SWR
 6. บน ECS: วาง `.env` (มี `OCR_URL=http://ocr:8000`), `docker-compose.yml`, `Caddyfile` → `docker compose --profile ocr up -d`
    (ไม่ใช้ OCR: `docker compose up -d` และเว้น `OCR_URL` ว่าง)
-7. รันสคริปต์ย้ายข้อมูลจาก SQLite (ครั้งเดียว)
-8. ตั้ง DNS (หรือใช้ `<EIP>.sslip.io`) → เปิด `https://…` ใส่รหัส → กดวิเคราะห์ 1 รอบ และถาม 1 คำถาม
+7. ย้ายข้อมูลจาก SQLite (ครั้งเดียว): `docker compose exec worker python migrate_to_postgres.py /app/data/import.db`
+8. ตั้ง DNS (หรือใช้ `<EIP>.sslip.io`) → เปิด `https://…` (ใส่รหัสถ้าตั้ง `BASIC_AUTH_HASH`) → กดวิเคราะห์ 1 รอบ และถาม 1 คำถาม
+
+**ยังไม่มี RDS:** ข้ามข้อ 2 และใช้ container `db` แทน (`--profile localdb` · `DATABASE_URL=postgresql://app:<รหัส>@db:5432/competitor`)
+หรือเว้น `DATABASE_URL` ว่างให้ใช้ SQLite แบบเดิม · ข้อ 3 (OBS) ข้ามได้เสมอ ไฟล์อยู่ใน volume `app_data`
+ข้อเสีย: ข้อมูลอยู่บนดิสก์ ECS เครื่องเดียว ต้องสำรองเอง (`pg_dump` ดู `DEPLOY.md`) และตั้ง snapshot ของดิสก์ EVS แทน backup ของ RDS
 
 ## ค่าใช้จ่ายโดยประมาณ
 
@@ -157,7 +135,7 @@ volumes:
 
 - **RDS for PostgreSQL ใน AP-Bangkok เปิด `pgvector` ได้ไหม และรุ่นไหน** เอกสาร Huawei ที่พบระบุ PG 12–14 (หน้าอาจเก่า)
   ตรวจด้วย `SELECT name FROM pg_available_extensions WHERE name = 'vector';`
-  ถ้าไม่มี: รัน PostgreSQL + pgvector เป็น container บน ECS แทน (image `pgvector/pgvector`) + สำรองข้อมูลไป OBS
+  ถ้าไม่มี: แอปยังทำงานได้ (เก็บเวกเตอร์เป็น bytea คิดความใกล้ด้วย numpy) หรือใช้ container `db` (`pgvector/pgvector:pg16`, `--profile localdb`) แทน RDS
 - **SWR มีใน AP-Bangkok ไหม** ถ้าไม่มี ใช้ SWR region ใกล้สุด หรือ build image บน ECS ตรง ๆ
 - **General Text OCR ของ Huawei รองรับภาษาไทยไหม** ที่ยืนยันได้มีแค่บัตรประชาชนไทยและป้ายทะเบียนไทยใน AP-Bangkok
   ถ้าไม่รองรับ ใช้ container `ocr` (Tesseract) ตามแบบ
@@ -170,5 +148,5 @@ volumes:
 | ECS เครื่องเดียว + Compose | CCE (Kubernetes) ใช้ image เดิม แยก `web` หลาย replica + ELB |
 | ตาราง `jobs` เป็น queue | DMS (Kafka/RabbitMQ) เมื่อ worker หลายเครื่อง |
 | e5 ใน container | embedding API (ตั้ง `EMBED_BACKEND=api`) หรือ ModelArts |
-| basic auth | ระบบ login จริง (เช่น IAM/OIDC ผ่าน proxy) |
+| basic auth (ไม่บังคับ รหัสชุดเดียว) | ระบบ login จริง (เช่น IAM/OIDC ผ่าน proxy) |
 | RDS single | RDS แบบ primary/standby |

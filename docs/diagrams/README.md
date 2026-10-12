@@ -6,6 +6,10 @@
 **วิธีเปิด:** ดับเบิลคลิกไฟล์ `.html` ในเครื่อง · GitHub แสดงไฟล์ HTML เป็นโค้ด ไม่ render
 กล่องที่มีป้าย `SRC` ลิงก์ไปบรรทัดในโค้ดที่ commit `37cee1c` บน GitHub (เปิดได้หลัง push)
 
+ป้ายในภาพอัปเดตเป็น PostgreSQL + pgvector, worker ตาม `MONITOR_AT` และรหัสผ่านไม่บังคับแล้ว
+(กล่อง "Daily trigger" ในภาพ monitor ไม่มีลิงก์ `SRC` เพราะ `worker.py` ยังไม่มีใน commit `37cee1c` ที่ลิงก์ชี้อยู่)
+ภาพไฟล์ไหนเรียกไฟล์ไหนของทั้งระบบ ดู [`system-flow.md`](../system-flow.md) และ `system-flow-*.png` / `.svg` ในโฟลเดอร์นี้
+
 | ไดอะแกรม | ชนิด | ระบบ | เอกสาร |
 |---|---|---|---|
 | [Analysis pipeline](analysis-pipeline.html) | dataflow | ภาพรวม: แหล่งข้อมูล → จัดหมวด → ตาราง → รายงาน | [architecture.md](../architecture.md) |

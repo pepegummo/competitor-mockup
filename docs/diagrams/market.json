@@ -30,7 +30,7 @@
       "sources": [{ "path": "core/benchmark.py", "line": 30, "end_line": 61 }, { "path": "core/sources/set_api.py", "line": 79, "end_line": 123 }] },
     { "id": "px", "type": "backend", "label": "Daily prices", "sublabel": "stock + SET/mai", "stage": 1, "row": 2, "tag": "6 months",
       "sources": [{ "path": "core/impact.py", "line": 24, "end_line": 40 }, { "path": "core/sources/set_api.py", "line": 131, "end_line": 145 }] },
-    { "id": "fintable", "type": "database", "label": "financials", "sublabel": "1 row per company", "stage": 2, "row": 0, "tag": "SQLite",
+    { "id": "fintable", "type": "database", "label": "financials", "sublabel": "1 row per company", "stage": 2, "row": 0, "tag": "PostgreSQL",
       "sources": [{ "path": "core/db.py", "line": 282, "end_line": 302 }] },
     { "id": "hlcache", "type": "database", "label": "market_cache", "sublabel": "grp: hl: keys", "stage": 2, "row": 1, "tag": "24 h",
       "sources": [{ "path": "core/db.py", "line": 561, "end_line": 578 }, { "path": "core/benchmark.py", "line": 64, "end_line": 76 }] },

@@ -11,7 +11,7 @@
 
 ```mermaid
 flowchart LR
-    W[("watchlists<br/>ชุดติดตาม")] --> CLI["monitor.py<br/>(Task Scheduler ทุกวัน / ปุ่ม รันตอนนี้)"]
+    W[("watchlists<br/>ชุดติดตาม")] --> CLI["monitor.py<br/>(บนเครื่อง: Task Scheduler · docker: worker ตาม MONITOR_AT<br/>/ ปุ่ม รันตอนนี้)"]
     CLI --> RUN["pipeline.run"]
     RUN --> SNAP["monitor.snapshot<br/>ตัวเลข 30 วันล่าสุดต่อบริษัท"]
     PREV[("runs<br/>snapshot รอบก่อน")] --> CH
@@ -30,7 +30,8 @@ flowchart LR
    เก็บ config ของผลที่เปิดอยู่ (บริษัท บริษัทเรา โหมด หัวข้อที่สนใจ บริษัทในเครือ แหล่งข้อมูล) ลง `watchlists`
 2. **ตั้งเวลา** (`watch_panel._schedule`): สร้างงาน `CompetitorCompareMonitor` ใน Windows Task Scheduler ด้วย `schtasks /SC DAILY` ให้รัน `pythonw monitor.py` ตามเวลาที่เลือก (ค่าเริ่ม 08:00)
    เครื่องที่ไม่ใช่ Windows จะแสดงบรรทัด crontab ให้ copy แทน
-3. **รัน** (`monitor.py`): วนทุกชุด → `pipeline.run(..., watch_id=id)` ชุดหนึ่งพังไม่ทำให้ชุดอื่นหยุด · ปุ่ม "รันตอนนี้" เรียก `monitor.py --id <ชุด>` เบื้องหลัง
+   ใน docker (`CC_JOB_QUEUE=1`) ไม่มีปุ่มตั้งเวลา: `worker.py` รันทุกชุดวันละครั้งตาม `MONITOR_AT` ใน `.env` (หน้าเว็บแสดงเวลาที่ตั้งไว้)
+3. **รัน** (`monitor.py`): วนทุกชุด → `pipeline.run(..., watch_id=id)` ชุดหนึ่งพังไม่ทำให้ชุดอื่นหยุด · ปุ่ม "รันตอนนี้" เรียก `monitor.py --id <ชุด>` เบื้องหลัง (ใน docker สร้างงาน `{"watch_id": id}` ในตาราง `jobs` ให้ worker หยิบ)
 4. **snapshot** (`monitor.snapshot`) ต่อบริษัท จากรายการที่เผยแพร่ใน 30 วันล่าสุด (`WINDOW_DAYS`):
    - `news_30d` และ % ข่าวลบ/บวก (ข่าว = `analyze.news_only` ไม่นับรีวิวและ PDF ที่อัปโหลด)
    - `reviews_30d` และ `stars_30d`
@@ -87,12 +88,12 @@ flowchart LR
 | จำนวนขั้นต่ำก่อนเตือนเรื่องน้ำเสียง/ดาว | `monitor.MIN_NEWS` | 5 |
 | % ข่าวลบเปลี่ยน / ดาวเปลี่ยน | `monitor.NEG_JUMP_PTS` / `STAR_JUMP` | 10 จุด / 0.3 ดาว |
 | ตัวอย่างต่อเรื่อง | `monitor.MAX_ITEMS` | 5 |
-| เวลารันรายวัน | หน้าติดตามอัตโนมัติ | 08:00 |
+| เวลารันรายวัน | บนเครื่อง: หน้าติดตามอัตโนมัติ · docker: env `MONITOR_AT` | 08:00 · docker: ไม่ตั้ง = ไม่รันอัตโนมัติ |
 | ช่องทางแจ้งเตือน | env `ALERT_WEBHOOK_URL` | ไม่ตั้ง = ดูในแอปอย่างเดียว |
 
 ## เมื่อมีปัญหา
 
-- **เครื่องปิดหรือหลับตอนถึงเวลา:** Task Scheduler ข้ามรอบนั้น (บน cloud จะเปลี่ยนเป็น worker ที่รันตลอด ดู [`huawei-cloud.md`](../huawei-cloud.md))
+- **เครื่องปิดหรือหลับตอนถึงเวลา:** Task Scheduler ข้ามรอบนั้น · ใน docker ถ้า worker ปิดอยู่ตอนถึงเวลา จะรันทันทีที่เปิดในวันเดียวกัน (`worker.daily_due`) และไม่รันซ้ำในวันเดียวกัน (`data/last_daily_run.txt`)
 - **ชุดหนึ่งพัง:** บันทึก traceback ใน `monitor.log` แล้วรันชุดถัดไป
 - **ส่ง webhook ไม่สำเร็จ:** บันทึก "ส่งไม่สำเร็จ (ชื่อ error)" ผลยังอยู่ในแอป
 - **มีเรื่องสำคัญแต่ไม่ได้ตั้ง webhook:** บันทึกว่ามีเรื่องสำคัญ ให้ดูในแอป
@@ -105,9 +106,10 @@ flowchart LR
 | `monitor.py` | `main`, `run_watch`, `run_job` | CLI: ไม่มี argument = ทุกชุด · `--id N` · `--job N` (งานเบื้องหลังจากปุ่มเริ่มวิเคราะห์) · `--test-alert` |
 | `core/monitor.py` | `snapshot`, `changes`, `alert_text`, `send_alert`, `webhook_url` | กฎและการส่ง |
 | `core/db.py` | `save_watchlist`, `watchlists`, `delete_watchlist`, `save_run`, `get_run`, `previous_snapshots` | ข้อมูล |
-| `ui/watch_panel.py` | `save_form`, `_schedule`, `_alerts`, `start_background` | หน้าติดตาม |
+| `ui/watch_panel.py` | `save_form`, `_schedule`, `_alerts`, `start_background`, `submit_job`, `run_watch_now` | หน้าติดตาม · ส่งงานเข้าคิวเมื่อ `CC_JOB_QUEUE=1` |
+| `worker.py` | `main`, `monitor_at`, `daily_due` | docker: หยิบงานจาก `jobs` + รันรายวันตาม `MONITOR_AT` |
 
 - **เพิ่มกฎเตือน:** เพิ่มค่าใน `snapshot` (ถ้าต้องเทียบตัวเลข) แล้วเพิ่มเงื่อนไขใน `changes` ด้วย `add(company, level, kind, text, items)`
   ตัวเลขใหม่ใน snapshot ให้เช็กว่ารอบก่อนมีค่านั้นด้วย (ดูตัวอย่าง `price_moves`) เพื่อไม่ให้เตือนย้อนหลังทั้งหมดในรอบแรก
-- **บน cloud:** ตัด `schtasks` / `subprocess` และให้ `worker.py` รันตาม `MONITOR_AT` ดู [`huawei-cloud.md`](../huawei-cloud.md) ข้อ 4–5
+- **ใน docker** (`CC_JOB_QUEUE=1` ตั้งไว้ใน image): ไม่ใช้ `schtasks` / `subprocess` ปุ่มในหน้าเว็บแค่สร้างงานในตาราง `jobs` ให้ `worker.py` หยิบ · เทส: `tests/test_worker.py`
 - **เทส** (`tests/test_monitor.py`): `test_new_financials_and_negative_news` · `test_no_previous_run_no_alerts` · `test_new_price_move_alert_only_when_previous_tracked_it`

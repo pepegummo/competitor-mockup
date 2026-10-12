@@ -2,7 +2,7 @@
 
 ส่วนที่ทุกระบบใช้ร่วมกัน:
 - การเรียก LLM พร้อมบันทึกและเล่นคำตอบซ้ำ
-- ฐานข้อมูล SQLite
+- ฐานข้อมูล PostgreSQL (ตั้ง `DATABASE_URL`) หรือ SQLite
 - โหมดเดโมที่เปิดได้โดยไม่ต้องมีเน็ต
 - โครงหน้าเว็บ
 - ชุดเทส
@@ -43,14 +43,22 @@ flowchart LR
 
 ## ฐานข้อมูล (`core/db.py`)
 
-- SQLite ไฟล์เดียว `data/app.db` (เปลี่ยนโฟลเดอร์ด้วย `CC_DATA_DIR` เช่น ชุดเดโมหรือเทส)
-- `connect()`:
-  - เปิด connection ใหม่ทุกครั้ง commit เมื่อสำเร็จ แล้วปิดเสมอ
-  - `timeout=30` ให้หลายเธรดรอ lock แทนการ error (ดึงข้อมูล/จัดหมวดพร้อมกัน)
-  - เปิด foreign key
+- 2 แบบ เลือกด้วย `DATABASE_URL`:
+  - ตั้ง (`postgresql://...`) = **PostgreSQL** เช่น RDS หรือ container `db` ใน compose
+  - ไม่ตั้ง = **SQLite** ไฟล์เดียว `data/app.db` (เปลี่ยนโฟลเดอร์ด้วย `CC_DATA_DIR` เช่น ชุดเดโมหรือเทส)
+- `connect()` ใช้ได้เหมือนกันทั้งสองแบบ: commit เมื่อสำเร็จ rollback เมื่อ error
+  - SQLite: เปิด connection ใหม่ทุกครั้ง `timeout=30` ให้หลายเธรดรอ lock แทนการ error · เปิด foreign key
+  - PostgreSQL: connection pool ต่อ process (`psycopg_pool`) ห่อด้วย `_PgConn` ให้รับ `?` และคืนแถวที่อ่านได้ทั้ง `r["col"]` และ `r[0]`
+    · ตัดตัวอักษร NUL ออกจากข้อความก่อนบันทึก (PostgreSQL รับไม่ได้)
+- SQL เขียนชุดเดียวที่ใช้ได้ทั้งสองแบบ: `ON CONFLICT` แทน `INSERT OR …` · `RETURNING id` แทน `lastrowid` ·
+  `CASE WHEN` แทนการบวก boolean · `_df()` แทน `pd.read_sql_query` · จุดที่ต่างจริงแยกด้วย `_pg()` (เช่น `claim_job` ใช้ `SKIP LOCKED`)
 - `init_db()`: สร้างตารางตาม `SCHEMA` และเพิ่มคอลัมน์ที่เพิ่มทีหลังให้ DB เก่าอัตโนมัติ (`MIGRATIONS`)
+  · PostgreSQL แปลง schema ตอนสร้าง (`_pg_schema`) และเปิด extension `vector` ถ้าได้
+- เวกเตอร์ (`embeddings`): PostgreSQL + pgvector คิดความใกล้ใน DB (`embedding_scores`) · กรณีอื่นเก็บ bytes คิดด้วย numpy
 - ทุก query ใช้ parameter (`?`) และ `_in(ids)` สร้าง `?,?,?` สำหรับ `IN (...)`
-- รายการตารางแบ่งกลุ่มดูใน [`architecture.md`](../architecture.md#ข้อมูล-sqlite-dataappdb) · บน cloud จะย้ายไป PostgreSQL ดู [`huawei-cloud.md`](../huawei-cloud.md) ข้อ 1
+- ย้ายข้อมูลจาก SQLite: `python migrate_to_postgres.py [app.db]` (ตั้ง `DATABASE_URL` ก่อน) ดู [`DEPLOY.md`](../../DEPLOY.md)
+- เทสกับ PostgreSQL: ตั้ง `TEST_DATABASE_URL` แล้ว `pytest` (ล้าง schema `public` ทุกเทส ห้ามชี้ DB จริง)
+- รายการตารางแบ่งกลุ่มดูใน [`architecture.md`](../architecture.md#ข้อมูล-ตารางในฐานข้อมูล)
 
 ## โหมดเดโม
 

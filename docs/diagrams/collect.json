@@ -24,7 +24,7 @@
   "nodes": [
     { "id": "profile", "type": "backend", "label": "Profile lookup", "sublabel": "first run only", "stage": 0, "row": 0, "tag": "1 LLM call",
       "sources": [{ "path": "core/pipeline.py", "line": 28, "end_line": 49 }, { "path": "core/profile.py", "line": 40, "end_line": 76 }] },
-    { "id": "companies", "type": "database", "label": "companies", "sublabel": "aliases · app ids", "stage": 0, "row": 1, "tag": "SQLite",
+    { "id": "companies", "type": "database", "label": "companies", "sublabel": "aliases · app ids", "stage": 0, "row": 1, "tag": "PostgreSQL",
       "sources": [{ "path": "core/db.py", "line": 222, "end_line": 236 }, { "path": "core/pipeline.py", "line": 23, "end_line": 25 }] },
     { "id": "sources", "type": "external", "label": "5 source modules", "sublabel": "fetch(row, limit)", "stage": 1, "row": 1, "tag": "3 parallel",
       "sources": [{ "path": "core/collect.py", "line": 13, "end_line": 19 }, { "path": "core/sources/__init__.py", "line": 10, "end_line": 16 }, { "path": "core/collect.py", "line": 65, "end_line": 74 }] },
@@ -36,7 +36,7 @@
       "sources": [{ "path": "core/collect.py", "line": 48, "end_line": 51 }, { "path": "core/collect.py", "line": 85, "end_line": 90 }, { "path": "core/db.py", "line": 212, "end_line": 219 }] },
     { "id": "fulltext", "type": "backend", "label": "Full text", "sublabel": "optional", "stage": 3, "row": 2, "tag": "trafilatura",
       "sources": [{ "path": "core/fulltext.py", "line": 21, "end_line": 42 }, { "path": "core/collect.py", "line": 92, "end_line": 95 }] },
-    { "id": "documents", "type": "database", "label": "documents", "sublabel": "unique hash", "stage": 4, "row": 2, "tag": "SQLite",
+    { "id": "documents", "type": "database", "label": "documents", "sublabel": "unique hash", "stage": 4, "row": 2, "tag": "PostgreSQL",
       "sources": [{ "path": "core/collect.py", "line": 99, "end_line": 104 }, { "path": "core/db.py", "line": 189, "end_line": 201 }] }
   ],
   "flows": [

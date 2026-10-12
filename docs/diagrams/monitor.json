@@ -32,7 +32,7 @@
                   },
                   {
                       "id":  "data",
-                      "label":  "SQLite"
+                      "label":  "Database"
                   }
               ],
     "phases":  [
@@ -120,16 +120,9 @@
                       "lane":  "runner",
                       "col":  1,
                       "type":  "cloud",
-                      "label":  "Task Scheduler",
-                      "sublabel":  "daily 08:00",
-                      "width":  128,
-                      "sources":  [
-                                      {
-                                          "path":  "ui/watch_panel.py",
-                                          "line":  80,
-                                          "end_line":  103
-                                      }
-                                  ]
+                      "label":  "Daily trigger",
+                      "sublabel":  "worker · MONITOR_AT",
+                      "width":  128
                   },
                   {
                       "id":  "runpy",

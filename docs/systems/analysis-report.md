@@ -19,9 +19,9 @@ flowchart TB
         S3 --> L["link_refs: [n] → ลิงก์"]
         L --> DB[("reports · runs")]
     end
-    UI["ปุ่ม เริ่มวิเคราะห์"] -->|"สร้างแถวใน jobs"| BG["monitor.py --job (เบื้องหลัง)"]
+    UI["ปุ่ม เริ่มวิเคราะห์"] -->|"สร้างแถวใน jobs"| BG["บนเครื่อง: monitor.py --job<br/>docker: worker.py หยิบจากคิว"]
     BG --> RUN
-    SCHED["Windows Task Scheduler"] -->|"monitor.py"| RUN
+    SCHED["Windows Task Scheduler<br/>/ worker ตาม MONITOR_AT"] -->|"monitor.py"| RUN
     DB --> VIEW["หน้าภาพรวม · ดาวน์โหลด Word"]
 ```
 
@@ -84,7 +84,8 @@ flowchart TB
 กด "เริ่มวิเคราะห์" แล้วหน้าเว็บไม่ค้าง เพราะงานถูกส่งไปรันใน process แยก:
 
 1. `ui/state.start_job` ทำขั้นที่ต้องโต้ตอบในหน้าเว็บก่อน (บันทึกบริษัท หาบริษัทในเครือ) แล้ว `db.create_job` สร้างแถวใน `jobs` สถานะ `running`
-2. `watch_panel.start_background("--job", id)` เปิด `monitor.py --job <id>` ด้วย `pythonw` (ไม่มีหน้าต่าง) ส่ง environment เดิมไปด้วย
+2. บนเครื่อง: `watch_panel.start_background("--job", id)` เปิด `monitor.py --job <id>` ด้วย `pythonw` (ไม่มีหน้าต่าง) ส่ง environment เดิมไปด้วย
+   ใน docker (`CC_JOB_QUEUE=1`): `submit_job` สร้างแถวสถานะ `queued` แทน แล้ว `worker.py` หยิบ (`db.claim_job` ทุก 5 วินาที) · worker ถูกรีสตาร์ทกลางงาน = งานนั้นเป็น `error`
 3. `monitor.run_job` เรียก `pipeline.run` โดย log แต่ละบรรทัดลง `jobs.log` ในรูป `kind|ข้อความ`
 4. ใน sidebar ทุกหน้า `state.job_watch` (fragment ทุก 2 วินาที) อ่าน `jobs` แสดงเวลาและสถานะล่าสุด หน้าภาพรวมแสดง log เต็ม (`job_progress`)
 5. จบแล้ว `finish_job` ตั้งสถานะ `done`/`error` → `job_watch` เปิดผลให้เอง (`open_run`) ไม่ว่าผู้ใช้อยู่หน้าไหน

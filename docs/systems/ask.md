@@ -61,7 +61,8 @@ flowchart LR
 |---|---|
 | โมเดล | `intfloat/multilingual-e5-small` (384 มิติ) ผ่าน `sentence-transformers` บน CPU โหลดครั้งแรก ~470 MB · ใส่คำนำ `query:` / `passage:` ตามที่ e5 ต้องการ |
 | ข้อความ | หัวข้อ + สรุป ไม่เกิน 500 ตัว |
-| cache | ตาราง `embeddings` key = sha256(โมเดล + ชนิด + ข้อความ) เก็บ float32 ที่ normalize แล้ว (cosine = dot) ข้อความเดิมไม่คำนวณซ้ำ |
+| cache | ตาราง `embeddings` key = sha256(โมเดล + ชนิด + ข้อความ) เก็บเวกเตอร์ที่ normalize แล้ว (cosine = dot) ข้อความเดิมไม่คำนวณซ้ำ |
+| คิดความใกล้ | PostgreSQL + pgvector: `db.embedding_scores` คิด `1 - (vec <=> q)` ใน DB กับทุกรายการของผลที่เปิดอยู่ · SQLite หรือ RDS ที่ไม่มี pgvector: โหลดเวกเตอร์มาคิดด้วย numpy (ผลเท่ากัน) |
 | คำนวณล่วงหน้า | `embed.warm` ตอนวิเคราะห์เบื้องหลัง คำถามแรกจึงไม่ช้า |
 | backend | `EMBED_BACKEND=local` (ค่าเริ่ม) หรือ `api` (เรียก `/v1/embeddings` ของ endpoint LLM ใช้เมื่อมีโมเดล embedding · ตอนนี้ key ใช้ได้แค่ qwen3.5) · เปลี่ยนโมเดลด้วย `EMBED_MODEL` |
 
@@ -109,10 +110,10 @@ embedding ไม่นับเป็นการเรียก LLM
 | ไฟล์ | ฟังก์ชัน | หน้าที่ |
 |---|---|---|
 | `core/ask.py` | `parse`, `candidates`, `_close`, `retrieve`, `answer`, `PARSE_PROMPT`, `ANSWER_PROMPT` | เส้นทางถาม |
-| `core/embed.py` | `vectors`, `similarity`, `warm`, `_local`, `_api` | embedding + cache |
+| `core/embed.py` | `ensure`, `vectors`, `similarity`, `warm`, `_local`, `_api` | embedding + cache |
 | `ui/sections/ask.py` | `tab_ask`, `_examples` | หน้าถาม คำถามตัวอย่าง ประวัติ |
 
-- **บน cloud:** เปลี่ยน cache `embeddings` + numpy เป็น pgvector (`ORDER BY vec <=> :q`) ดู [`huawei-cloud.md`](../huawei-cloud.md) ข้อ 2
+- **pgvector:** ไม่ใช้ index แบบ top-k เพราะ `retrieve` ต้องการคะแนนของทุกรายการ (ค่ากลาง + บวกกับคะแนนคำค้น) ดู [`huawei-cloud.md`](../huawei-cloud.md) ข้อ 2
 - **เทส** (`tests/test_ask_internal_misc.py`):
   - `test_keyword_hit_ranks_first`
   - `test_sentiment_filter_and_irrelevant_excluded`

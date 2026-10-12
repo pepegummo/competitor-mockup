@@ -28,7 +28,7 @@
                   },
                   {
                       "id":  "data",
-                      "label":  "SQLite"
+                      "label":  "Database"
                   },
                   {
                       "id":  "review",

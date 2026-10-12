@@ -7,7 +7,9 @@
 
 แอปเป็น Streamlit (`app.py`) ทุกการวิเคราะห์ใช้ `core/pipeline.py` ชุดเดียวกัน ไม่ว่าจะกดในแอป
 (ระบบรัน `monitor.py --job` เบื้องหลัง หน้าเว็บไม่ค้าง) หรือรันตามเวลาจาก Windows Task Scheduler (`monitor.py`)
-ข้อมูลทั้งหมดอยู่ใน SQLite ไฟล์เดียว (`data/app.db`) LLM คือ `qwen3.5` ผ่าน endpoint ของอาจารย์ (`core/llm.py`)
+ใน docker (`docker compose up`) ใช้ container `worker` (`worker.py`) หยิบงานจากตาราง `jobs` และรันรายวันตาม `MONITOR_AT` แทน
+ข้อมูลทั้งหมดอยู่ในฐานข้อมูลเดียว: PostgreSQL เมื่อตั้ง `DATABASE_URL` (RDS หรือ container `db`) ไม่ตั้ง = SQLite ไฟล์ `data/app.db`
+LLM คือ `qwen3.5` ผ่าน endpoint ของอาจารย์ (`core/llm.py`)
 
 ## เอกสารรายระบบ
 
@@ -47,12 +49,13 @@
 | เนื้อหาเต็ม | `googlenewsdecoder` (ต้องใช้ `selectolax<1.0`) + `trafilatura` | ถอดลิงก์ Google News แล้วอ่านบทความ | `core/fulltext.py` |
 | PDF / OCR | `pymupdf` (ข้อความในไฟล์) + Tesseract `tha+eng` ผ่าน `pytesseract` ใน container `ocr/` (FastAPI) เรียกตาม `OCR_URL` | อ่าน PDF ที่อัปโหลด หน้าสแกนใช้ OCR | `core/ocr.py`, `ocr/` |
 | คำนวณ | `pandas` · `tabulate` (ใช้กับ `to_markdown` ตอนส่งตารางให้ LLM) · `openpyxl` (อ่าน Excel) | ตารางทุกตัวเลข ข้อมูลภายใน | `core/analyze.py`, `core/internal.py` |
-| Embedding | `sentence-transformers` + `intfloat/multilingual-e5-small` · torch แบบ CPU · `numpy` (cosine) | ค้นด้วยความหมายในหน้าถามข้อมูล | `core/embed.py` |
-| ฐานข้อมูล | SQLite (`sqlite3` ในตัว Python) + ไฟล์ดิบ `data/raw/*.json` | เก็บทุกอย่าง ดูหัวข้อ "ข้อมูล" | `core/db.py` |
+| Embedding | `sentence-transformers` + `intfloat/multilingual-e5-small` · torch แบบ CPU · ความใกล้ (cosine) คิดด้วย pgvector ใน PostgreSQL หรือ `numpy` เมื่อใช้ SQLite | ค้นด้วยความหมายในหน้าถามข้อมูล | `core/embed.py` |
+| ฐานข้อมูล | PostgreSQL (`psycopg` + pool, pgvector) เมื่อตั้ง `DATABASE_URL` · ไม่ตั้ง = SQLite (`sqlite3` ในตัว Python) · ไฟล์ดิบ `data/raw/*.json` | เก็บทุกอย่าง ดูหัวข้อ "ข้อมูล" | `core/db.py` |
 | ส่งออก | `python-docx` | รายงาน Word | `core/export.py` |
-| งานเบื้องหลัง | `subprocess` (`monitor.py --job`) · Windows Task Scheduler (`schtasks`) · `ThreadPoolExecutor` | วิเคราะห์ไม่ให้หน้าเว็บค้าง · รันรายวัน · ดึง/classify พร้อมกัน | `ui/watch_panel.py`, `core/pipeline.py` |
+| งานเบื้องหลัง | บนเครื่อง: `subprocess` (`monitor.py --job`) + Windows Task Scheduler (`schtasks`) · ใน docker (`CC_JOB_QUEUE=1`): container `worker` (`worker.py`) หยิบงานจากตาราง `jobs` + รันรายวันตาม `MONITOR_AT` · `ThreadPoolExecutor` | วิเคราะห์ไม่ให้หน้าเว็บค้าง · รันรายวัน · ดึง/classify พร้อมกัน | `ui/watch_panel.py`, `worker.py`, `monitor.py`, `core/pipeline.py` |
 | แจ้งเตือน | webhook ผ่าน `requests` | Discord / Slack / Teams / Google Chat | `core/monitor.py` |
-| ทดสอบ | `pytest` (`requirements-dev.txt`) | unit test | `tests/` |
+| ทดสอบ | `pytest` (`requirements-dev.txt`) · ตั้ง `TEST_DATABASE_URL` = รันกับ PostgreSQL | unit test | `tests/` |
+| deploy | Docker Compose · `caddy:2` (HTTPS อัตโนมัติ · รหัสผ่านเมื่อตั้ง `BASIC_AUTH_HASH`) · `pgvector/pgvector:pg16` (profile `localdb`) · image `quix07/competitor-app` / `competitor-ocr` บน Docker Hub | รันทั้งระบบบนเครื่องหรือ ECS | `Dockerfile`, `docker-compose.yml`, `deploy/`, `DEPLOY.md` |
 
 `requirements.txt` ไม่ได้ pin เวอร์ชัน · torch ให้ลงแบบ CPU ก่อน: `pip install torch --index-url https://download.pytorch.org/whl/cpu`
 
@@ -153,19 +156,19 @@ flowchart LR
 | `core/internal.py` | อ่าน CSV/Excel ข้อมูลภายใน · บันทึก PDF ที่อัปโหลดเป็นส่วน ๆ | – | [internal-docs](systems/internal-docs.md) |
 | `core/ocr.py`, `ocr/` | อ่าน PDF ทีละหน้า: ส่งไป container `ocr` (FastAPI `POST /extract`) หรืออ่านในแอปเมื่อไม่ตั้ง `OCR_URL` · ตัดเป็นส่วน | – | [internal-docs](systems/internal-docs.md) |
 | `core/export.py` | ส่งออกรายงาน Word | – | [analysis-report](systems/analysis-report.md) |
-| `core/llm.py`, `core/db.py` | เรียก LLM + บันทึกทุก call ใน `llm_log` + replay · SQLite | – | [platform](systems/platform.md) |
+| `core/llm.py`, `core/db.py` | เรียก LLM + บันทึกทุก call ใน `llm_log` + replay · PostgreSQL / SQLite | – | [platform](systems/platform.md) |
 | `ui/nav.py`, `ui/pages/*` | เมนู (`st.navigation`) และหน้าต่าง ๆ: ภาพรวม · วิเคราะห์ใหม่ · ถามข้อมูล · ติดตาม · ข้อมูลภายใน · บริษัทและแหล่งข้อมูล · ตรวจความแม่น | – | [platform](systems/platform.md) |
 | `ui/state.py` | ผลที่เปิดอยู่ · ค่าฟอร์มที่จำข้ามหน้า · เริ่มงานเบื้องหลังและติดตามความคืบหน้า (fragment ใน sidebar) | – | [platform](systems/platform.md) |
 | `ui/results.py`, `ui/sections/*`, `ui/*_panel.py` | ส่วนประกอบของหน้า: ผลวิเคราะห์ ตัวกรอง กราฟ การ์ดบริษัท ฯลฯ | – | ในแต่ละระบบ |
 
-### ข้อมูล (SQLite `data/app.db`)
+### ข้อมูล (ตารางในฐานข้อมูล)
 
 | กลุ่ม | ตาราง |
 |---|---|
 | ข้อมูลหลัก | `companies` · `documents` (ข่าว/ประกาศ/รีวิว/PDF ที่อัปโหลด + เนื้อหา) · `facts` (ผล LLM ต่อรายการ) · `financials` · `internal_metrics` · `company_groups` |
 | ผลวิเคราะห์ / ติดตาม | `reports` · `runs` (snapshot + สิ่งที่เปลี่ยน) · `watchlists` · `jobs` (งานเบื้องหลัง) |
 | ตรวจคุณภาพ | `labels` |
-| cache / log | `llm_log` (prompt + คำตอบ ใช้ replay) · `market_cache` (ตัวเลขตลาด 1 วัน) · `embeddings` (เวกเตอร์ float32) |
+| cache / log | `llm_log` (prompt + คำตอบ ใช้ replay) · `market_cache` (ตัวเลขตลาด 1 วัน) · `embeddings` (เวกเตอร์: ชนิด `vector` ใน PostgreSQL · bytes float32 ใน SQLite) |
 
 ไฟล์ดิบอยู่ที่ `data/raw/{company}/{date}_{แหล่ง}.json` · PDF ต้นฉบับที่ `data/uploads/<sha256>.pdf` · ชุดเดโมอยู่ใน `demo/` (ฐานข้อมูล + ผลรอบล่าสุด)
 
@@ -183,24 +186,25 @@ flowchart LR
 | รายการ | สถานะ | ตอนนี้ทำอย่างไร |
 |---|---|---|
 | OCR (ไฟล์ PDF) | ✅ มีแล้ว (PDF ที่อัปโหลด) | `ocr/` (pymupdf + Tesseract ไทย) · ค้นและอ้างอิงได้ในแท็บถาม · ยังไม่ทำ: PDF แนบของประกาศ SET และข่าวที่ลิงก์เป็น PDF |
-| Vector search | ✅ มีแล้ว (ขนาด mock-up) | `embed.py` + SQLite + numpy · ผสมกับคำค้น (hybrid) · บน cloud เปลี่ยนเป็น Postgres + pgvector |
+| Vector search | ✅ มีแล้ว | `embed.py` · PostgreSQL คิดความใกล้ด้วย pgvector · SQLite คิดด้วย numpy · ผสมกับคำค้น (hybrid) |
 | LLM Router (จัดโดเมน) | ✅ มีแล้ว | `ask.parse` แยกบริษัท/หมวด/คำค้นของคำถาม · `process` จัดหมวดของข่าว |
 | LLM Detection + summarize | ✅ มีแล้ว | `process` ตัดข่าวที่ชื่อตรงแต่ไม่ใช่บริษัทนั้น + สรุป · `accuracy` วัดผลและป้อนตัวอย่างกลับ |
 | UI/UX web | ✅ มีแล้ว | Streamlit |
 
-## เป้าหมายบน Huawei Cloud (แผน ยังไม่ได้ทำ)
+## บน Huawei Cloud
 
-แบบเต็ม (รายการ service, containers, ขั้นตอน deploy, สิ่งที่ต้องแก้ในโค้ด) อยู่ใน [`huawei-cloud.md`](huawei-cloud.md) สรุป:
+โค้ดและ docker พร้อมแล้ว (รันทั้งระบบด้วย `docker compose` ได้ ทดสอบในเครื่องแล้ว) · ที่ยังไม่ได้ทำคือสร้าง resource บน Huawei Cloud
+(VPC, ECS, RDS, ฯลฯ) · ขั้นตอนขึ้นระบบอยู่ใน [`DEPLOY.md`](../DEPLOY.md) แบบเต็ม (รายการ service, ค่าใช้จ่าย) อยู่ใน [`huawei-cloud.md`](huawei-cloud.md)
 
-| ส่วน | ตอนนี้ | บน cloud |
-|---|---|---|
-| รันแอป | `streamlit run` บนเครื่อง | ECS เครื่องเดียวใน AP-Bangkok · Docker Compose: `proxy` (Caddy HTTPS + รหัสผ่าน) · `web` (Streamlit) · `ocr` (`OCR_URL=http://ocr:8000`) |
-| งานเบื้องหลัง / ตั้งเวลา | `subprocess` + Windows Task Scheduler | container `worker` รันรายวัน + หยิบงานจากตาราง `jobs` |
-| ฐานข้อมูล | SQLite | RDS for PostgreSQL |
-| เวกเตอร์ | ตาราง `embeddings` + numpy | pgvector |
-| ไฟล์ดิบ | `data/raw/` | OBS |
-| image / เฝ้าดู | – | SWR · Cloud Eye |
-| LLM / embedding | endpoint ของอาจารย์ · e5 ในเครื่อง | ไม่เปลี่ยน (e5 ฝังอยู่ใน image) |
+| ส่วน | รันบนเครื่อง (dev) | บน cloud | สถานะ |
+|---|---|---|---|
+| รันแอป | `streamlit run` | ECS เครื่องเดียวใน AP-Bangkok · Docker Compose: `proxy` (Caddy HTTPS + รหัสผ่านถ้าตั้ง) · `web` (Streamlit) · `ocr` (`OCR_URL=http://ocr:8000`) | ✅ พร้อม |
+| งานเบื้องหลัง / ตั้งเวลา | `subprocess` + Windows Task Scheduler | container `worker` รันรายวัน + หยิบงานจากตาราง `jobs` | ✅ พร้อม |
+| ฐานข้อมูล | SQLite (หรือ PostgreSQL เมื่อตั้ง `DATABASE_URL`) | RDS for PostgreSQL (หรือ container `db`) · ย้ายข้อมูลด้วย `migrate_to_postgres.py` | ✅ พร้อม · ต้องสร้าง RDS |
+| เวกเตอร์ | ตาราง `embeddings` + numpy | pgvector | ✅ พร้อม |
+| ไฟล์ดิบ / PDF / log | `data/` | volume บน ECS (OBS เมื่อแยกหลายเครื่อง) | ✅ ใช้ volume · OBS ยังไม่ทำ |
+| image / เฝ้าดู | – | Docker Hub (`quix07/*`) หรือ SWR · Cloud Eye | image พร้อม · Cloud Eye ยังไม่ตั้ง |
+| LLM / embedding | endpoint ของอาจารย์ · e5 ในเครื่อง | ไม่เปลี่ยน (e5 ฝังอยู่ใน image) | ✅ |
 
 ## ข้อจำกัดที่รู้
 
