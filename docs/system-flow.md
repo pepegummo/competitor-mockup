@@ -325,7 +325,7 @@ sequenceDiagram
 
 | โฟลเดอร์ | หน้าที่ |
 |---|---|
-| `/` (root) | จุดเริ่มทั้ง 3 ทาง (`app.py`, `monitor.py`, `worker.py`) + Dockerfile, compose, requirements |
+| `/` (root) | จุดเริ่มทั้ง 3 ทาง (`app.py`, `monitor.py`, `worker.py`) + `migrate_to_postgres.py` + Dockerfile, compose, requirements, `DEPLOY.md` |
 | `core/` | logic ทั้งหมด ไม่มี Streamlit: ดึงข้อมูล จัดหมวด วิเคราะห์ ฐานข้อมูล LLM |
 | `core/sources/` | ตัวดึงข้อมูลแต่ละแหล่ง ทุกตัวมี `fetch(company, limit)` คืน dict รูปแบบเดียวกัน |
 | `ui/` | หน้าเว็บ Streamlit: เมนู สถานะร่วม panel กราฟ |
@@ -334,9 +334,9 @@ sequenceDiagram
 | `ocr/` | service อ่าน PDF แยก container (FastAPI + Tesseract ไทย) ใช้ร่วมกับแอปได้ |
 | `data/` | ข้อมูลจริง: `app.db` (เมื่อใช้ SQLite), `raw/<บริษัท>/` ข้อมูลดิบที่ดึงมา, `last_run.json`, `monitor.log` |
 | `demo/` | ชุดข้อมูลเดโมออฟไลน์ (`run_demo.bat` ชี้ `CC_DATA_DIR` มาที่นี่ + `LLM_REPLAY=1`) |
-| `deploy/` | ไฟล์ขึ้นเซิร์ฟเวอร์จาก image บน Docker Hub (`docker-compose.yml`, `Caddyfile`) |
+| `deploy/` | ไฟล์ขึ้นเซิร์ฟเวอร์จาก image บน Docker Hub (`docker-compose.yml`, `Caddyfile` ไม่มีรหัส, `Caddyfile.auth` มีรหัส) |
 | `docs/` | เอกสาร: `architecture.md`, `systems/*.md` รายระบบ, `diagrams/*.html` แผนภาพ |
-| `tests/` | pytest (ask, benchmark, citation, impact, monitor, ocr, หน้า UI, worker) |
+| `tests/` | pytest (ask, benchmark, citation, impact, monitor, ocr, หน้า UI, worker, SQL ทั้ง SQLite/PostgreSQL + ย้ายข้อมูล) · ตั้ง `TEST_DATABASE_URL` = รันกับ PostgreSQL |
 
 ### ไฟล์ทางเข้า
 

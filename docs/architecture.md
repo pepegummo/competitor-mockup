@@ -202,7 +202,7 @@ flowchart LR
 | งานเบื้องหลัง / ตั้งเวลา | `subprocess` + Windows Task Scheduler | container `worker` รันรายวัน + หยิบงานจากตาราง `jobs` | ✅ พร้อม |
 | ฐานข้อมูล | SQLite (หรือ PostgreSQL เมื่อตั้ง `DATABASE_URL`) | RDS for PostgreSQL (หรือ container `db`) · ย้ายข้อมูลด้วย `migrate_to_postgres.py` | ✅ พร้อม · ต้องสร้าง RDS |
 | เวกเตอร์ | ตาราง `embeddings` + numpy | pgvector | ✅ พร้อม |
-| ไฟล์ดิบ / PDF / log | `data/` | volume บน ECS (OBS เมื่อแยกหลายเครื่อง) | ✅ ใช้ volume · OBS ยังไม่ทำ |
+| ไฟล์ดิบ / PDF / log | `data/` | volume `app_data` บนดิสก์ ECS (ไม่ใช้ OBS · ย้ายไป OBS เฉพาะเมื่อแยกหลายเครื่อง) | ✅ พร้อม |
 | image / เฝ้าดู | – | Docker Hub (`quix07/*`) หรือ SWR · Cloud Eye | image พร้อม · Cloud Eye ยังไม่ตั้ง |
 | LLM / embedding | endpoint ของอาจารย์ · e5 ในเครื่อง | ไม่เปลี่ยน (e5 ฝังอยู่ใน image) | ✅ |
 

@@ -17,7 +17,7 @@
 | [Huawei Cloud plan](huawei-cloud.html) | architecture | แผน deploy (ยังไม่ได้สร้าง) | [huawei-cloud.md](../huawei-cloud.md) |
 | [Data collection](collect.html) | dataflow | ดึงข้อมูลและกันซ้ำ | [collect.md](../systems/collect.md) |
 | [Classification loop](classify.html) | workflow | จัดหมวดด้วย LLM + วนกลับจากการตรวจความแม่น | [classify.md](../systems/classify.md) |
-| [Background job](background-job.html) | sequence | ปุ่มเริ่มวิเคราะห์ → `monitor.py --job` → เปิดผลเอง | [analysis-report.md](../systems/analysis-report.md) |
+| [Background job](background-job.html) | sequence | ปุ่มเริ่มวิเคราะห์ → `monitor.py --job` (บนเครื่อง) หรือ `worker.py` (docker) → เปิดผลเอง | [analysis-report.md](../systems/analysis-report.md) |
 | [Monitoring](monitor.html) | workflow | ติดตามอัตโนมัติและแจ้งเตือน | [monitor.md](../systems/monitor.md) |
 | [Market data](market.html) | dataflow | งบ SET · อันดับในหมวด · ราคาหุ้นหลังข่าว | [market.md](../systems/market.md) |
 | [Find competitors](discover.html) | workflow | หาคู่แข่ง Phase 3 | [discover-groups.md](../systems/discover-groups.md) |

@@ -21,7 +21,7 @@
       "sources": [{ "path": "ui/state.py", "line": 229, "end_line": 246 }] },
     { "id": "jobs", "type": "database", "label": "jobs table", "sublabel": "status · log",
       "sources": [{ "path": "core/db.py", "line": 627, "end_line": 653 }] },
-    { "id": "bg", "type": "backend", "label": "monitor.py --job", "sublabel": "pythonw process",
+    { "id": "bg", "type": "backend", "label": "Job runner", "sublabel": "pythonw · docker worker",
       "sources": [{ "path": "ui/watch_panel.py", "line": 36, "end_line": 39 }, { "path": "monitor.py", "line": 53, "end_line": 71 }] },
     { "id": "pipe", "type": "backend", "label": "pipeline.run", "sublabel": "collect · classify · report",
       "sources": [{ "path": "core/pipeline.py", "line": 84, "end_line": 179 }] },
@@ -35,8 +35,8 @@
   ],
   "messages": [
     { "id": "start", "from": "user", "to": "page", "y": 162, "label": "Start analysis", "variant": "default" },
-    { "id": "create", "from": "page", "to": "jobs", "y": 192, "label": "create_job: running", "variant": "default" },
-    { "id": "spawn", "from": "page", "to": "bg", "y": 222, "label": "spawn --job id", "variant": "dashed" },
+    { "id": "create", "from": "page", "to": "jobs", "y": 192, "label": "create_job (docker: queued)", "variant": "default" },
+    { "id": "spawn", "from": "page", "to": "bg", "y": 222, "label": "spawn --job / worker claims", "variant": "dashed" },
     { "id": "load", "from": "bg", "to": "jobs", "y": 252, "label": "get_job config", "variant": "default" },
     { "id": "run", "from": "bg", "to": "pipe", "y": 282, "label": "run(companies, opts)", "variant": "emphasis" },
     { "id": "log", "from": "pipe", "to": "jobs", "y": 312, "label": "append log lines", "variant": "dashed" },
@@ -60,7 +60,7 @@
       "title": "The page never blocks",
       "items": [
         "Interactive steps (save companies, pick group members) run in the page first",
-        "Analysis runs in a separate pythonw process with the same environment",
+        "Analysis runs outside the page: a pythonw process on a PC, the worker container in docker",
         "The user can switch pages; the sidebar opens the result when done"
       ]
     },
@@ -69,6 +69,7 @@
       "title": "Failure and exceptions",
       "items": [
         "run_job catches any exception and writes it to jobs.error",
+        "A restarted worker marks its unfinished job as error",
         "After 15 minutes the page offers a stop-waiting button",
         "Discover mode runs in the page because the user must confirm names"
       ]

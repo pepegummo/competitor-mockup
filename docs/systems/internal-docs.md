@@ -83,7 +83,7 @@ OCR ไม่ใช้ LLM
 |---|---|---|
 | `internal_metrics` | อ่าน + เขียน | ตัวเลขภายใน (บริษัท, ตัวชี้วัด) เป็น key |
 | `documents`, `facts` | เขียน | ส่วนของ PDF และผลสรุป |
-| `data/uploads/` | เขียน | PDF ต้นฉบับ (บน cloud ย้ายไป OBS) |
+| `data/uploads/` | เขียน | PDF ต้นฉบับ (บน cloud อยู่ใน volume `app_data` บนดิสก์ ECS) |
 
 ## ค่าที่ปรับได้
 

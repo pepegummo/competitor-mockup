@@ -141,6 +141,9 @@ streamlit run app.py
   ข่าวที่ตรวจด้วยมือแล้วไม่ถูกแตะ
 - ดึงข้อมูล 3 บริษัทพร้อมกัน และส่ง LLM จัดหมวด 4 ชุดพร้อมกัน: AIS/True/NT ครบทุกแหล่งจาก 224 เหลือ 77 วินาที
 - เทส: `pip install -r requirements-dev.txt` แล้ว `python -m pytest` (ไม่ใช้เน็ตหรือ LLM รวมเทสเปิดทุกหน้าเว็บกับชุดเดโม)
+  · เทสกับ PostgreSQL (ฐานข้อมูลเทสถูกล้างทุกครั้ง ห้ามชี้ DB จริง):
+  `docker run -d --name cc-pgtest -e POSTGRES_PASSWORD=test -p 55432:5432 pgvector/pgvector:pg16` แล้ว
+  `$env:TEST_DATABASE_URL="postgresql://postgres:test@localhost:55432/postgres"; python -m pytest`
   เทส OCR ด้วย Tesseract ในเครื่องจะถูกข้าม (skipped) ถ้าไม่ได้ลง ซึ่งเป็นปกติ
 - โค้ดหน้าเว็บอยู่ใน `ui/`: เมนู `ui/nav.py` · แต่ละหน้า `ui/pages/` · สถานะที่ใช้ร่วมกัน (ผลที่เปิดอยู่ ฟอร์ม
   งานเบื้องหลัง) `ui/state.py` · ส่วนประกอบ (results, panels, charts, sections) ขั้นตอนวิเคราะห์อยู่ใน `core/pipeline.py`

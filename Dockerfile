@@ -28,7 +28,7 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 COPY . .
 # ชุดไฟล์สำหรับขึ้นเซิร์ฟเวอร์ (compose, Caddyfile, .env.example, DEPLOY.md) ให้ดึงออกจาก image ได้โดยไม่ต้องมีโค้ด
-# compose ชี้ไป image รุ่นเดียวกับที่ build: docker build --build-arg VERSION=0.1 ...
+# compose ชี้ไป image รุ่นเดียวกับที่ build: docker build --build-arg VERSION=0.2 -t quix07/competitor-app:0.2 .
 ARG VERSION=latest
 RUN sed -i "s/__VERSION__/${VERSION}/g" deploy/docker-compose.yml \
  && cp .env.example DEPLOY.md deploy/

@@ -13,20 +13,21 @@
     { "id": "web", "type": "frontend", "label": "web", "sublabel": "Streamlit app.py", "pos": [470, 215], "size": [136, 62], "tag": "container" },
     { "id": "ocr", "type": "backend", "label": "ocr", "sublabel": "FastAPI + Tesseract", "pos": [470, 50], "size": [136, 62], "tag": "profile ocr" },
     { "id": "worker", "type": "backend", "label": "worker", "sublabel": "MONITOR_AT + jobs", "pos": [470, 385], "size": [136, 62], "tag": "container" },
-    { "id": "obs", "type": "cloud", "label": "OBS bucket", "sublabel": "later: raw · uploads", "pos": [960, 215], "size": [140, 62], "tag": "outside VPC" },
+    { "id": "volume", "type": "database", "label": "app_data volume", "sublabel": "raw JSON · PDFs · log", "pos": [240, 385], "size": [136, 62], "tag": "EVS disk" },
     { "id": "rds", "type": "database", "label": "RDS PostgreSQL", "sublabel": "pgvector", "pos": [720, 300], "size": [140, 62], "tag": "private subnet" },
     { "id": "ext", "type": "external", "label": "Outside services", "sublabel": "LLM · news · SET", "pos": [720, 470], "size": [140, 62], "tag": "via EIP" }
   ],
   "boundaries": [
-    { "kind": "region", "label": "Huawei Cloud AP-Bangkok VPC", "wraps": ["proxy", "web", "ocr", "worker", "rds"], "pad": 22 },
-    { "kind": "security-group", "label": "ECS · Docker Compose", "wraps": ["proxy", "web", "ocr", "worker"], "pad": 14 }
+    { "kind": "region", "label": "Huawei Cloud AP-Bangkok VPC", "wraps": ["proxy", "web", "ocr", "worker", "volume", "rds"], "pad": 22 },
+    { "kind": "security-group", "label": "ECS · Docker Compose", "wraps": ["proxy", "web", "ocr", "worker", "volume"], "pad": 14 }
   ],
   "connections": [
     { "id": "c-https", "from": "users", "to": "proxy", "label": "HTTPS", "variant": "emphasis" },
     { "id": "c-proxy", "from": "proxy", "to": "web", "label": ":8501", "variant": "emphasis" },
     { "id": "c-ocr", "from": "web", "to": "ocr", "label": "PDF" },
     { "id": "c-websql", "from": "web", "to": "rds", "label": "SQL", "variant": "emphasis" },
-    { "id": "c-uploads", "from": "web", "to": "obs", "label": "later", "variant": "dashed" },
+    { "id": "c-files", "from": "worker", "to": "volume", "label": "raw · log" },
+    { "id": "c-uploads", "from": "web", "to": "volume", "label": "PDF uploads" },
     { "id": "c-jobs", "from": "worker", "to": "rds", "label": "jobs · SQL" },
     { "id": "c-out", "from": "worker", "to": "ext", "label": "fetch · LLM", "variant": "dashed" }
   ],
@@ -37,7 +38,7 @@
       "items": [
         "web and worker share one image; only the start command differs",
         "ocr runs only with the compose profile, capped at 1.5 CPU / 1.5 GB",
-        "Images from Docker Hub (quix07) or SWR; raw files stay on the ECS volume for now",
+        "Images from Docker Hub (quix07) or SWR; files live on the app_data volume (back up with EVS snapshots)",
         "No RDS yet: run the db container (pgvector/pgvector:pg16, profile localdb)"
       ]
     },

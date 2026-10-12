@@ -5048,19 +5048,19 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </g>
         </g>
 
-        <g data-edge-from="page" data-edge-to="jobs" data-edge-label="create_job: running" data-edge-key="1" data-edge-id="create">
+        <g data-edge-from="page" data-edge-to="jobs" data-edge-label="create_job (docker: queued)" data-edge-key="1" data-edge-id="create">
           <path data-composition-edge-from="page" data-composition-edge-to="jobs" data-composition-edge-id="create" data-composition-points="305.1,192;459.7,192" d="M 305.1 192 L 459.7 192" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g data-detail="context">
-          <rect x="313.7" y="172" width="137.39999999999998" height="18" rx="3" class="c-mask"/>
-          <text x="382.4" y="182" class="t-muted" font-size="11" text-anchor="middle">create_job: running</text>
+          <rect x="287.29999999999995" y="172" width="190.2" height="18" rx="3" class="c-mask"/>
+          <text x="382.4" y="182" class="t-muted" font-size="11" text-anchor="middle">create_job (docker: queued)</text>
         </g>
         </g>
 
-        <g data-edge-from="page" data-edge-to="bg" data-edge-label="spawn --job id" data-edge-key="2" data-edge-id="spawn">
+        <g data-edge-from="page" data-edge-to="bg" data-edge-label="spawn --job / worker claims" data-edge-key="2" data-edge-id="spawn">
           <path data-composition-edge-from="page" data-composition-edge-to="bg" data-composition-edge-id="spawn" data-composition-points="305.1,222;628.3,222" d="M 305.1 222 L 628.3 222" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g data-detail="context">
-          <rect x="414.5" y="202" width="104.39999999999999" height="18" rx="3" class="c-mask"/>
-          <text x="466.7" y="212" class="t-edge-dashed" font-size="11" text-anchor="middle">spawn --job id</text>
+          <rect x="371.6" y="202" width="190.2" height="18" rx="3" class="c-mask"/>
+          <text x="466.70000000000005" y="212" class="t-edge-dashed" font-size="11" text-anchor="middle">spawn --job / worker claims</text>
         </g>
         </g>
 
@@ -5188,15 +5188,15 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <text data-detail="context" x="466.7" y="122" class="t-muted" font-size="7" text-anchor="middle">status · log</text>
         </g>
 
-        <g id="node-bg" data-node-id="bg" data-node-label="monitor.py --job" tabindex="0" role="button" aria-label="Focus monitor.py --job, pythonw process, Sequence participant" aria-pressed="false" data-node-kind="backend" data-node-sublabel="pythonw process" data-node-context="Sequence participant">
-          <title>monitor.py --job · pythonw process · Sequence participant</title>
+        <g id="node-bg" data-node-id="bg" data-node-label="Job runner" tabindex="0" role="button" aria-label="Focus Job runner, pythonw · docker worker, Sequence participant" aria-pressed="false" data-node-kind="backend" data-node-sublabel="pythonw · docker worker" data-node-context="Sequence participant">
+          <title>Job runner · pythonw · docker worker · Sequence participant</title>
           <rect x="567.8" y="72" width="135" height="60" rx="6" class="c-mask"/>
           <rect x="567.8" y="72" width="135" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(573.8 78) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="635.3" y="108" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">monitor.py --job</text>
-          <text data-detail="context" x="635.3" y="122" class="t-muted" font-size="7" text-anchor="middle">pythonw process</text>
+          <text data-node-label="" data-detail-anchor="" x="635.3" y="108" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Job runner</text>
+          <text data-detail="context" x="635.3" y="122" class="t-muted" font-size="7" text-anchor="middle">pythonw · docker worker</text>
         </g>
 
         <g id="node-pipe" data-node-id="pipe" data-node-label="pipeline.run" tabindex="0" role="button" aria-label="Focus pipeline.run, collect · classify · report, Sequence participant" aria-pressed="false" data-node-kind="backend" data-node-sublabel="collect · classify · report" data-node-context="Sequence participant">
@@ -5427,7 +5427,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>Interactive steps (save companies, pick group members) run in the page first</li>
-          <li>Analysis runs in a separate pythonw process with the same environment</li>
+          <li>Analysis runs outside the page: a pythonw process on a PC, the worker container in docker</li>
           <li>The user can switch pages; the sidebar opens the result when done</li>
         </ul>
       </div>
@@ -5439,6 +5439,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>run_job catches any exception and writes it to jobs.error</li>
+          <li>A restarted worker marks its unfinished job as error</li>
           <li>After 15 minutes the page offers a stop-waiting button</li>
           <li>Discover mode runs in the page because the user must confirm names</li>
         </ul>

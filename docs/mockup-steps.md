@@ -308,14 +308,14 @@ If you do not know this company, return [].
 
 | ใน mock-up | ตอนขึ้น cloud จะเปลี่ยนเป็น |
 |---|---|
-| กดปุ่ม / Windows Task Scheduler (`monitor.py`) | scheduler ของ cloud รันรายวัน/รายสัปดาห์ |
-| งานเบื้องหลัง + thread ในเครื่อง | queue + worker ที่คุม rate limit |
-| `data/raw/` บนเครื่อง | object storage (OBS) |
-| SQLite | managed PostgreSQL |
-| embedding ใน SQLite + numpy | pgvector |
+| ECS เครื่องเดียว | แยก web/worker หลายเครื่อง (CCE + ELB) เมื่อผู้ใช้มากขึ้น · ต้องย้ายไฟล์ไป OBS ก่อน |
+| รหัสผ่านชุดเดียว (ไม่บังคับ) | ระบบ login จริง |
 
 ที่เคยอยู่ในตารางนี้และทำแล้ว: ราคาหุ้น รีวิว งบการเงิน (ทำแล้ว) · chat แบบ RAG (แท็บถามข้อมูล + ค้นด้วยความหมาย) · alert (webhook)
 · OCR สำหรับ PDF ที่อัปโหลด (container `ocr/`) ยังไม่ทำ: PDF แนบของประกาศ SET และแบบ 56-1 ที่ดึงอัตโนมัติ
+· ตั้งเวลารายวันและคิวงาน: container `worker` รันตาม `MONITOR_AT` และหยิบงานจากตาราง `jobs` (ใน docker)
+· ฐานข้อมูล: PostgreSQL (RDS หรือ container `db`) ตั้งด้วย `DATABASE_URL` + `migrate_to_postgres.py` · ค้นด้วยความหมายด้วย pgvector
+· ไฟล์ดิบ: ตัดสินใจเก็บใน volume `app_data` บนดิสก์ ECS ไม่ใช้ OBS (แอปไม่อ่านไฟล์พวกนี้กลับ)
 รายละเอียดดู [`huawei-cloud.md`](huawei-cloud.md)
 
 ## ลำดับที่แนะนำ

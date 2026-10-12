@@ -91,7 +91,7 @@ flowchart TB
 5. จบแล้ว `finish_job` ตั้งสถานะ `done`/`error` → `job_watch` เปิดผลให้เอง (`open_run`) ไม่ว่าผู้ใช้อยู่หน้าไหน
 
 ข้อยกเว้น: โหมดหาคู่แข่งรันในหน้าเว็บ (`state.run_pipeline`) เพราะผู้ใช้ต้องติ๊กยืนยันรายชื่อก่อน
-บน cloud ส่วนนี้จะเปลี่ยนเป็น worker หยิบงาน `queued` (ดู [`huawei-cloud.md`](../huawei-cloud.md))
+ใน docker ใช้ worker หยิบงาน `queued` แทน process แยก (ข้อ 2) ขั้นที่เหลือเหมือนกัน · ดู [`huawei-cloud.md`](../huawei-cloud.md)
 
 ## LLM
 

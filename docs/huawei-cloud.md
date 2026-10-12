@@ -6,7 +6,7 @@
 
 > **สถานะ:** เฟส 1 (Docker Compose + worker + Caddy) **ทำแล้ว** · เฟส 2 ส่วนฐานข้อมูล (PostgreSQL + pgvector, สคริปต์ย้ายข้อมูล) **ทำแล้ว**
 > ตั้ง `DATABASE_URL` ชี้ RDS หรือใช้ container `db` (`--profile localdb`) ไม่ตั้ง = SQLite แบบเดิม · ขั้นตอนอยู่ใน [`DEPLOY.md`](../DEPLOY.md)
-> ที่ยังไม่ทำ: ไฟล์ไป OBS (ตัดสินใจเก็บใน volume บน ECS ไปก่อน) · ยังไม่ได้สร้าง resource บน Huawei Cloud
+> ไฟล์นอกฐานข้อมูล (ข้อมูลดิบ, PDF ที่อัปโหลด, log) เก็บใน volume `app_data` บนดิสก์ ECS (ไม่ใช้ OBS) · ยังไม่ได้สร้าง resource บน Huawei Cloud
 
 **Region:** AP-Bangkok (`ap-southeast-2`) ข้อมูลอยู่ในไทย และใกล้ผู้ใช้/แหล่งข่าวไทย
 
@@ -21,16 +21,17 @@ flowchart LR
             WEB["web<br/>Streamlit app.py"]
             WORKER["worker<br/>รันรายวันตาม MONITOR_AT + หยิบงานจากตาราง jobs"]
             OCR["ocr<br/>Tesseract tha + pymupdf"]
+            VOL[("volume app_data<br/>ดิสก์ EVS: ไฟล์ดิบ · PDF · log")]
             PROXY --> WEB
             WEB -->|"PDF ที่อัปโหลด"| OCR
+            WEB -->|"PDF ต้นฉบับ"| VOL
+            WORKER -->|"ไฟล์ดิบ · log"| VOL
         end
         RDS[("RDS for PostgreSQL<br/>+ pgvector<br/>subnet ส่วนตัว")]
         WEB --> RDS
         WORKER --> RDS
     end
     EIP --> PROXY
-    WEB --> OBS[("OBS<br/>ไฟล์ดิบ · ไฟล์อัปโหลด · รายงาน")]
-    WORKER --> OBS
     SWR["SWR<br/>Docker image"] -.->|"docker pull"| ECS
     WORKER -->|"ผ่าน EIP"| EXT["ภายนอก<br/>LLM อาจารย์ · Google News · RSS<br/>SET · App Store/Play · webhook"]
     WEB -->|"ผ่าน EIP"| EXT
@@ -48,10 +49,9 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 | Service | ใช้ทำอะไร | ขนาดสำหรับเดโม |
 |---|---|---|
 | **VPC + Subnet + Security Group** | เครือข่ายส่วนตัว · SG ของ ECS เปิดแค่ 80/443 (และ 22 เฉพาะ IP ทีม) · SG ของ RDS รับ 5432 จาก SG ของ ECS เท่านั้น | – |
-| **ECS** | รัน Docker Compose ทั้งหมด | 4 vCPU / 8 GB (torch + โมเดล e5 + Streamlit + งานวิเคราะห์) · Ubuntu 22.04 · ดิสก์ EVS 40 GB |
+| **ECS** | รัน Docker Compose ทั้งหมด · ไฟล์ดิบ PDF ที่อัปโหลด และ log อยู่ใน volume `app_data` บนดิสก์ EVS ของเครื่องนี้ (สำรองด้วย snapshot) | 4 vCPU / 8 GB (torch + โมเดล e5 + Streamlit + งานวิเคราะห์) · Ubuntu 22.04 · ดิสก์ EVS 40 GB |
 | **EIP + Bandwidth** | IP สาธารณะ: รับผู้ใช้ และออกไป LLM/แหล่งข่าว | ~5 Mbit/s คิดตาม traffic |
 | **RDS for PostgreSQL** | แทน SQLite ทุกตาราง · extension `pgvector` เก็บเวกเตอร์และค้นความใกล้ | single instance 2 vCPU / 4 GB · ดิสก์ 40 GB · backup อัตโนมัติ 7 วัน |
-| **OBS** | ไฟล์ดิบ (`data/raw`) · ไฟล์ที่อัปโหลด (CSV/Excel/PDF) · รายงาน .docx | Standard bucket ส่วนตัว |
 | **SWR** | เก็บ Docker image ส่วนตัว: build บนเครื่องเรา → push → ECS pull | organization เดียว |
 | **Cloud Eye** | กราฟและแจ้งเตือน CPU / RAM / ดิสก์ ของ ECS และ RDS | ค่าเริ่มต้น + alarm ดิสก์ > 80% |
 | DEW / CSMS (ไม่บังคับ) | เก็บ `LLM_API_KEY` รหัส DB และ webhook แทนไฟล์ `.env` | เดโมใช้ `.env` บน ECS (`chmod 600`) ได้ |
@@ -81,7 +81,6 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 |---|---|
 | `LLM_API_KEY` | key ของอาจารย์ |
 | `DATABASE_URL` | `postgresql://app:<รหัส>@<IP ส่วนตัวของ RDS>:5432/competitor` |
-| `OBS_ENDPOINT`, `OBS_BUCKET`, `OBS_AK`, `OBS_SK` | ที่เก็บไฟล์ (หรือใช้ agency ของ ECS แทน AK/SK) |
 | `EMBED_BACKEND` | `local` |
 | `ALERT_WEBHOOK_URL` | ไม่บังคับ |
 | `MONITOR_AT` | เวลารันอัตโนมัติ เช่น `07:00` (เวลาไทย) |
@@ -97,7 +96,7 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 |---|---|---|
 | 1 | `core/db.py` | **ทำแล้ว** · ตั้ง `DATABASE_URL` = PostgreSQL (psycopg + connection pool) ไม่ตั้ง = SQLite · SQL ชุดเดียวใช้ได้ทั้งสองแบบ (`ON CONFLICT`, `RETURNING id`, `CASE` แทน boolean) · schema แปลงตอนสร้าง (`SERIAL`, `DOUBLE PRECISION`, `vector`) · `ADD COLUMN IF NOT EXISTS` · ตัดตัวอักษร NUL ก่อนบันทึก |
 | 2 | `core/embed.py` | **ทำแล้ว** · `embeddings.vec` เป็น `vector` (ไม่ระบุมิติ ใช้ได้ทั้งโมเดล local และ api) · ความใกล้คิดใน DB ด้วย `1 - (vec <=> q)` กับทุกรายการของผลที่เปิดอยู่ (ไม่ใช้ index top-k เพราะ `ask.py` ใช้คะแนนทุกรายการ) · ไม่มี pgvector = เก็บ bytea คิดด้วย numpy |
-| 3 | `core/collect.py`, `core/internal.py` | **ยังไม่ทำ (ตัดสินใจแล้ว)** · ไฟล์ดิบและ PDF ต้นฉบับแอปเขียนเก็บไว้เฉย ๆ ไม่อ่านกลับ จึงเก็บใน volume บน ECS ก่อน ย้ายไป OBS เมื่อจะแยก web/worker หลายเครื่อง |
+| 3 | `core/collect.py`, `core/internal.py` | **ไม่ทำ (ตัดสินใจแล้ว)** · ไฟล์ดิบและ PDF ต้นฉบับแอปเขียนเก็บไว้เฉย ๆ ไม่อ่านกลับ จึงใช้ volume `app_data` บน ECS ไม่ใช้ OBS (ดู "ขยายเมื่อผู้ใช้มากขึ้น") |
 | 4 | `ui/watch_panel.py`, `ui/state.py` | **ทำแล้ว** (เมื่อ `CC_JOB_QUEUE=1` ซึ่งตั้งไว้ใน image) · ตัด `schtasks` (ใช้ได้แค่ Windows) และ `subprocess.Popen` · ปุ่ม "เริ่มวิเคราะห์"/"รันตอนนี้" แค่สร้างแถวใน `jobs` สถานะ `queued` ให้ worker หยิบ · เวลารันรายวันมาจาก `MONITOR_AT` |
 | 5 | ใหม่ `worker.py` | **ทำแล้ว** (`UPDATE … RETURNING` · PostgreSQL ใช้ `FOR UPDATE SKIP LOCKED`) · วนทุก 5 วินาที: หยิบงาน `queued` → รัน `pipeline.run` · ถึงเวลา `MONITOR_AT` → รันชุดติดตามทั้งหมดเหมือน `monitor.py` |
 | 6 | ใหม่ `Dockerfile`, `docker-compose.yml`, `Caddyfile`, `.dockerignore` | **ทำแล้ว** · `.dockerignore` ต้องตัด `.env`, `data/`, `.venv/`, `.git/` |
@@ -110,23 +109,22 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 
 1. สร้าง VPC + subnet + Security Group 2 ชุด (ECS, RDS)
 2. สร้าง RDS for PostgreSQL ใน subnet ส่วนตัว → สร้าง user `app` / database `competitor` → `CREATE EXTENSION vector;` (คำสั่งอยู่ใน `DEPLOY.md`)
-3. สร้าง OBS bucket ส่วนตัว
-4. สร้าง ECS + EIP → ลง Docker + compose plugin → เปิด Cloud Eye agent
-5. บนเครื่องเรา: `docker build` 2 image (`competitor-app` จากโฟลเดอร์หลัก · `competitor-ocr` จาก `ocr/`) → `docker push` ไป SWR
-6. บน ECS: วาง `.env` (มี `OCR_URL=http://ocr:8000`), `docker-compose.yml`, `Caddyfile` → `docker compose --profile ocr up -d`
+3. สร้าง ECS + EIP (ดิสก์ EVS 40 GB) → ลง Docker + compose plugin → เปิด Cloud Eye agent · ตั้ง snapshot ของดิสก์เป็นประจำ
+4. บนเครื่องเรา: `docker build` 2 image (`competitor-app` จากโฟลเดอร์หลัก · `competitor-ocr` จาก `ocr/`) → `docker push` ไป SWR
+5. บน ECS: วาง `.env` (มี `OCR_URL=http://ocr:8000`), `docker-compose.yml`, `Caddyfile` → `docker compose --profile ocr up -d`
    (ไม่ใช้ OCR: `docker compose up -d` และเว้น `OCR_URL` ว่าง)
-7. ย้ายข้อมูลจาก SQLite (ครั้งเดียว): `docker compose exec worker python migrate_to_postgres.py /app/data/import.db`
-8. ตั้ง DNS (หรือใช้ `<EIP>.sslip.io`) → เปิด `https://…` (ใส่รหัสถ้าตั้ง `BASIC_AUTH_HASH`) → กดวิเคราะห์ 1 รอบ และถาม 1 คำถาม
+6. ย้ายข้อมูลจาก SQLite (ครั้งเดียว): `docker compose exec worker python migrate_to_postgres.py /app/data/import.db`
+7. ตั้ง DNS (หรือใช้ `<EIP>.sslip.io`) → เปิด `https://…` (ใส่รหัสถ้าตั้ง `BASIC_AUTH_HASH`) → กดวิเคราะห์ 1 รอบ และถาม 1 คำถาม
 
 **ยังไม่มี RDS:** ข้ามข้อ 2 และใช้ container `db` แทน (`--profile localdb` · `DATABASE_URL=postgresql://app:<รหัส>@db:5432/competitor`)
-หรือเว้น `DATABASE_URL` ว่างให้ใช้ SQLite แบบเดิม · ข้อ 3 (OBS) ข้ามได้เสมอ ไฟล์อยู่ใน volume `app_data`
+หรือเว้น `DATABASE_URL` ว่างให้ใช้ SQLite แบบเดิม
 ข้อเสีย: ข้อมูลอยู่บนดิสก์ ECS เครื่องเดียว ต้องสำรองเอง (`pg_dump` ดู `DEPLOY.md`) และตั้ง snapshot ของดิสก์ EVS แทน backup ของ RDS
 
 ## ค่าใช้จ่ายโดยประมาณ
 
 เดโมไม่ต้องเปิดตลอด เลือกแบบ **pay-per-use** แล้วปิด ECS/RDS เมื่อไม่ใช้
 ราคาจริงขึ้นกับ region และโปรโมชัน ให้คำนวณด้วย Pricing Calculator ของ Huawei Cloud ก่อนสร้าง
-(ส่วนที่แพงสุดคือ ECS 4 vCPU / 8 GB และ RDS ส่วน OBS, SWR, Cloud Eye เกือบไม่มีค่าใช้จ่ายที่ขนาดนี้)
+(ส่วนที่แพงสุดคือ ECS 4 vCPU / 8 GB และ RDS ส่วน SWR, Cloud Eye และ snapshot ของดิสก์เกือบไม่มีค่าใช้จ่ายที่ขนาดนี้)
 ถ้างบจำกัด: ลด ECS เหลือ 2 vCPU / 4 GB ได้ แต่คำถามแรกหลังเปิดเครื่อง (โหลดโมเดล) และการคำนวณเวกเตอร์จะช้าลง
 
 ## ต้องตรวจใน console ก่อนสร้าง
@@ -150,3 +148,4 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 | e5 ใน container | embedding API (ตั้ง `EMBED_BACKEND=api`) หรือ ModelArts |
 | basic auth (ไม่บังคับ รหัสชุดเดียว) | ระบบ login จริง (เช่น IAM/OIDC ผ่าน proxy) |
 | RDS single | RDS แบบ primary/standby |
+| ไฟล์ใน volume `app_data` บน ECS | OBS เมื่อแยก web/worker หลายเครื่อง (ต้องแก้ `collect.py` / `internal.py` ให้เขียนไป bucket) |
