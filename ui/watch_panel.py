@@ -89,22 +89,33 @@ def _watch_list(on_open):
                          help="รันเบื้องหลัง ใช้เวลาหลายนาที เสร็จแล้วกด “เปิดผลล่าสุด”"):
                 run_watch_now(w["id"])
                 st.toast(f"เริ่มรัน {w['name']} เบื้องหลังแล้ว")
-            if c4.button("Delete", key=f"w_del_{w['id']}", icon=":material/delete:", help="ลบชุดนี้"):
+            if c4.button("", key=f"w_del_{w['id']}", icon=":material/delete:", help="Delete this watchlist"):
                 db.delete_watchlist(w["id"])
                 st.rerun()
     return opened
 
 
+def _admin():
+    """ส่วนสำหรับผู้ดูแลระบบ (คำสั่ง/ไฟล์ตั้งค่า) พับไว้ ผู้ใช้ทั่วไปไม่ต้องเปิด"""
+    return st.expander("For administrators", icon=":material/admin_panel_settings:")
+
+
 def _schedule():
-    st.markdown("**ตั้งเวลารันทุกวัน**")
+    st.markdown("**Daily schedule**")
     if QUEUE:
         at = os.environ.get("MONITOR_AT", "").strip()
-        st.caption(f"รันทุกชุดในรายการอัตโนมัติทุกวันเวลา {at} น. (ตั้งด้วย MONITOR_AT ในไฟล์ .env บนเซิร์ฟเวอร์)" if at
-                   else "ยังไม่ได้ตั้งเวลา ใส่ MONITOR_AT=07:00 ในไฟล์ .env บนเซิร์ฟเวอร์ แล้ว docker compose up -d")
+        st.caption(f"ระบบรันทุกชุดในรายการอัตโนมัติทุกวันเวลา {at} น." if at
+                   else "ยังไม่ได้ตั้งเวลารันอัตโนมัติ ติดต่อผู้ดูแลระบบเพื่อตั้งเวลา")
+        with _admin():
+            st.caption("ตั้งด้วย MONITOR_AT ในไฟล์ .env บนเซิร์ฟเวอร์ แล้วรัน `docker compose up -d`")
+            st.code("MONITOR_AT=07:00", language="bash")
         return
     if os.name != "nt":
-        st.code(f"0 8 * * * {_python(False)} {SCRIPT}", language="bash")
-        st.caption("ใส่บรรทัดนี้ใน crontab (crontab -e)")
+        st.caption("ยังไม่ได้ตั้งเวลารันอัตโนมัติบนเครื่องนี้ ติดต่อผู้ดูแลระบบเพื่อตั้งเวลา "
+                   "(ระหว่างนี้กด Run now ในแต่ละชุดด้านบนได้)")
+        with _admin():
+            st.caption("ใส่บรรทัดนี้ใน crontab (crontab -e)")
+            st.code(f"0 8 * * * {_python(False)} {SCRIPT}", language="bash")
         return
     exists, info = _schtasks("/Query", "/TN", TASK, "/FO", "LIST")
     c1, c2, c3 = st.columns([1.2, 1.6, 1.6], vertical_alignment="bottom")
@@ -127,24 +138,27 @@ def _schedule():
 
 
 def _alerts():
-    st.markdown("**แจ้งเตือน**")
+    st.markdown("**Alerts**")
     if monitor.webhook_url():
         c1, c2 = st.columns([3, 1], vertical_alignment="center")
         c1.caption("ส่งแจ้งเตือนเมื่อมีเรื่องสำคัญ (แจ้งตลาดใหม่ งบใหม่ ข่าวลบใหม่ ข่าวลบ/ดาวรีวิวเปลี่ยนแรง) "
-                   "ไปที่ webhook ใน .env")
+                   "ไปยังช่องทางแชตที่ผู้ดูแลระบบตั้งไว้")
         if c2.button("Send test", icon=":material/send:", width="stretch"):
             ok, msg = monitor.send_alert("📊 Competitor Compare: ทดสอบการแจ้งเตือน")
             st.toast(msg)
     else:
-        st.caption("ยังไม่ได้ตั้งช่องทางแจ้งเตือน ผลยังดูได้ในแอป ถ้าต้องการให้ส่งเข้าแชต ใส่ webhook ของ "
-                   "Discord / Slack / Microsoft Teams / Google Chat ในไฟล์ `.env` แล้วรีสตาร์ทแอป:")
-        st.code("ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...", language="bash")
+        st.caption("ยังไม่ได้ตั้งช่องทางแจ้งเตือน ผลยังดูได้ในแอป ถ้าต้องการให้ส่งเข้าแชต "
+                   "(Discord / Slack / Microsoft Teams / Google Chat) ติดต่อผู้ดูแลระบบ")
+        with _admin():
+            st.caption("ใส่ webhook ในไฟล์ `.env` แล้วรีสตาร์ทแอป:")
+            st.code("ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...", language="bash")
 
 
 def _log():
     if LOG.exists():
-        with st.popover("Auto-run log", icon=":material/receipt_long:"):
+        with _admin():
             lines = LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+            st.caption("Auto-run log (60 บรรทัดล่าสุด)")
             st.code("\n".join(lines[-60:]) or "-", language=None)
 
 
