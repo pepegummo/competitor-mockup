@@ -111,8 +111,10 @@ def kpi_cards(v):
     groups = v["groups"]
     competitors = [c for c in v["companies"] if c != self_name and c in table_b.index and c not in groups]
     news = analyze.news_only(df)
-    for start in range(0, len(v["companies"]), 4):
-        names = v["companies"][start:start + 4]
+    st.html("<style>[data-testid='stMetricValue'] {font-size: 1.7rem;} "  # ตัวเลขใหญ่เกินจนถูกตัดเป็น “…” ในการ์ดแคบ
+            "[data-testid='stMetricValue'] * {overflow: visible; text-overflow: clip;}</style>")
+    for start in range(0, len(v["companies"]), 3):  # 3 การ์ดต่อแถว (4 ใบทำให้แคบเกินไป)
+        names = v["companies"][start:start + 3]
         for col, name in zip(st.columns(len(names)), names):
             with col.container(border=True):
                 is_self = name == self_name
