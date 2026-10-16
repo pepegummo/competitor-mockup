@@ -25,7 +25,7 @@ def _upload(self_name):
         st.warning(f"ชื่อเหล่านี้ไม่ตรงกับบริษัทในระบบ: {', '.join(unmatched)} — บันทึกได้ แต่จะใช้เมื่อวิเคราะห์บริษัท"
                    "ชื่อนี้เท่านั้น" + ("" if self_name else " (ใช้ “เรา” ได้เมื่อเลือกโหมดที่มีบริษัทของเรา)"),
                    icon=":material/warning:")
-    if st.button(f"บันทึก {len(rows)} ค่า", type="primary", icon=":material/save:"):
+    if st.button(f"Save {len(rows)} values", type="primary", icon=":material/save:"):
         db.save_internal(rows)
         st.session_state.pop("internal_file", None)
         st.toast("บันทึกข้อมูลภายในแล้ว")
@@ -39,7 +39,7 @@ def render(self_name):
     c1, c2 = st.columns([3, 1], vertical_alignment="center")
     c1.caption("แบบยาว: คอลัมน์ บริษัท, ตัวชี้วัด, ค่า, หน่วย, ช่วงเวลา · "
                "แบบกว้าง: คอลัมน์แรกเป็นบริษัท คอลัมน์อื่นเป็นตัวชี้วัด")
-    c2.download_button("ไฟล์ตัวอย่าง", internal.TEMPLATE.to_csv(index=False).encode("utf-8-sig"),
+    c2.download_button("Sample file", internal.TEMPLATE.to_csv(index=False).encode("utf-8-sig"),
                        "internal_template.csv", "text/csv", icon=":material/download:", on_click="ignore",
                        width="stretch")
     _upload(self_name)
@@ -48,7 +48,7 @@ def render(self_name):
         st.dataframe(current.drop(columns=["uploaded_at"]).rename(
             columns={"company": "บริษัท", "metric": "ตัวชี้วัด", "value": "ค่า", "unit": "หน่วย",
                      "period": "ช่วงเวลา"}), hide_index=True, width="stretch")
-        if st.button("ลบข้อมูลภายในทั้งหมด", icon=":material/delete:"):
+        if st.button("Delete all internal data", icon=":material/delete:"):
             db.clear_internal()
             st.rerun()
     st.checkbox("ให้ LLM ใช้ข้อมูลภายในตอนเขียนรายงาน", key="internal_llm",
@@ -72,7 +72,7 @@ def _pdf_section(self_name):
         for r in saved.itertuples():
             c1, c2 = st.columns([5, 1], vertical_alignment="center")
             c1.markdown(f"{r.source_name} · {r.company} · {r.parts} ส่วน · {r.uploaded_at[:16].replace('T', ' ')}")
-            if c2.button("ลบ", key=f"del_pdf_{r.Index}", icon=":material/delete:"):
+            if c2.button("Delete", key=f"del_pdf_{r.Index}", icon=":material/delete:"):
                 db.delete_uploaded(r.source_name, r.company)
                 _refresh_result()
                 st.rerun()
@@ -109,7 +109,7 @@ def _pdf_upload(up, self_name):
         if last - first + 1 > ocr.MAX_PAGES:
             st.warning(f"เลือกไว้ {last - first + 1} หน้า เกิน {ocr.MAX_PAGES} หน้า", icon=":material/warning:")
             return
-    if not st.button("อ่านและบันทึก", type="primary", icon=":material/description:"):
+    if not st.button("Read and save", type="primary", icon=":material/description:"):
         return
     with st.spinner(f"กำลังอ่าน {up.name} หน้า {first}–{last} …"):
         try:
@@ -118,8 +118,11 @@ def _pdf_upload(up, self_name):
             st.error(str(e))
             return
     if not res["parts"]:
-        st.warning("ไม่พบข้อความที่อ่านได้" + (" หน้าเหล่านี้เป็นภาพ และเครื่องนี้ยังไม่มี OCR (ตั้ง OCR_URL หรือลง Tesseract)"
+        st.warning("ไม่พบข้อความที่อ่านได้" + (" หน้าเหล่านี้เป็นภาพสแกน และระบบยังไม่เปิดใช้การอ่านภาพ (OCR) ติดต่อผู้ดูแลระบบ"
                                                if not res["ocr"] else ""), icon=":material/warning:")
+        if not res["ocr"]:
+            with st.expander("For administrators", icon=":material/admin_panel_settings:"):
+                st.caption("ตั้ง `OCR_URL` ในไฟล์ `.env` หรือติดตั้ง Tesseract บนเครื่อง")
         return
     if not res["added"]:
         st.info("เอกสารช่วงนี้บันทึกไว้แล้ว")

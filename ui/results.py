@@ -1,5 +1,5 @@
 """หน้าผลลัพธ์ (อยู่ในหน้าภาพรวม): หัวผล + ปุ่ม (ตัวกรอง ติดตาม ดาวน์โหลด วิเคราะห์ใหม่) → สิ่งที่ควรรู้
-→ การ์ดสรุปต่อบริษัท → แท็บ สรุป / เรา vs คู่แข่ง / เจาะลึก / ข้อมูลทั้งหมด
+→ แท็บ สรุป / เรา vs คู่แข่ง / เจาะลึก / ข้อมูลทั้งหมด
 ลำดับตามหลัก overview first: สรุปก่อน ตัวกรองและรายละเอียดเปิดเมื่อต้องการ · ส่วนย่อยของแท็บเจาะลึกอยู่ใน ui/sections/"""
 from datetime import datetime, timedelta, timezone
 
@@ -35,7 +35,7 @@ def filter_bar(res):
     """ตัวกรองอยู่ใน popover ข้างหัวผล (เปิดเมื่อต้องการ) กรองทุกกราฟ/ตารางในหน้า"""
     df = res["df"]
     n = active_filters()
-    with st.popover(f"ตัวกรอง ({n})" if n else "ตัวกรอง", icon=":material/filter_alt:", width="stretch"):
+    with st.popover(f"Filter ({n})" if n else "Filter", icon=":material/filter_alt:", width="stretch"):
         companies = st.multiselect("บริษัท", res["companies"], key="flt_company", placeholder="ทุกบริษัท")
         sources = st.multiselect("แหล่ง", [v for v in collect.SOURCE_TYPE_LABEL.values() if v in set(df["แหล่ง"])],
                                  key="flt_src", placeholder="ทุกแหล่ง")
@@ -44,7 +44,7 @@ def filter_bar(res):
                         selection_mode="multi", key="flt_cat")
         sents = st.pills("น้ำเสียง", list(SENTIMENT_COLORS), selection_mode="multi", key="flt_sent")
         query = st.text_input("ค้นหาคำ", key="flt_q", placeholder="เช่น 5G, กำไร")
-        st.button("ล้างตัวกรอง", icon=":material/filter_alt_off:", on_click=reset_filters, width="stretch",
+        st.button("Clear filters", icon=":material/filter_alt_off:", on_click=reset_filters, width="stretch",
                   key="flt_clear_pop")
     return {"companies": companies, "sources": sources, "days": PERIODS.get(period or "ทั้งหมด"),
             "period": period, "categories": cats or [], "sentiments": sents or [], "query": query.strip()}
@@ -106,50 +106,6 @@ def build_view(res, f):
 
 # ---------- ส่วนบนของหน้า ----------
 
-def kpi_cards(v):
-    df, table_b, self_name = v["df"], v["b"], v["self_name"]
-    groups = v["groups"]
-    competitors = [c for c in v["companies"] if c != self_name and c in table_b.index and c not in groups]
-    news = analyze.news_only(df)
-    for start in range(0, len(v["companies"]), 4):
-        names = v["companies"][start:start + 4]
-        for col, name in zip(st.columns(len(names)), names):
-            with col.container(border=True):
-                is_self = name == self_name
-                parent = groups.get(name, {}).get("parent")
-                st.markdown(f"#### {name}" + ("  :blue-badge[บริษัทเรา]" if is_self else "")
-                            + (f"  :gray-badge[ในเครือ {parent}]" if parent else ""))
-                sub = news[news["company"] == name]
-                if not sub.empty and name in table_b.index:
-                    pos, neg = table_b.loc[name, "positive"], table_b.loc[name, "negative"]
-                    pos_delta = neg_delta = None
-                    if is_self and competitors:
-                        pos_delta = f"{pos - table_b.loc[competitors, 'positive'].mean():+.0f} จุด"
-                        neg_delta = f"{neg - table_b.loc[competitors, 'negative'].mean():+.0f} จุด"
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("ข่าว", len(sub), help="จำนวนข่าว ข่าวแจ้งตลาด และบทความ (ไม่รวมรีวิว)")
-                    c2.metric("บวก", f"{pos:.0f}%", pos_delta,
-                              help="% ของข่าวที่เป็นผลดีต่อบริษัท ตัวเลขด้านล่างคือส่วนต่างจากค่าเฉลี่ยคู่แข่ง")
-                    c3.metric("ลบ", f"{neg:.0f}%", neg_delta, delta_color="inverse",
-                              help="% ของข่าวที่เป็นผลเสียต่อบริษัท ยิ่งน้อยยิ่งดี")
-                    top = sub["หมวด"].value_counts()
-                    st.caption(f"เน้นมากที่สุด: **{top.index[0]}** ({top.iloc[0] / len(sub) * 100:.0f}% ของข่าว)")
-                else:
-                    st.caption("ไม่มีข่าวตามตัวกรองนี้")
-                reviews = v["reviews"]
-                if not reviews.empty and name in reviews.index:
-                    r = reviews.loc[name]
-                    st.caption(f"รีวิวแอป ★ **{r['avg_stars']:.1f}** จาก {int(r['reviews'])} รีวิว "
-                               f"(รีวิวลบ {r['negative_pct']:.0f}%)")
-                fin = v["fin"]
-                if not fin.empty and name in fin.index and pd.notna(fin.loc[name, "revenue_mb"]):
-                    f = fin.loc[name]
-                    growth = [f"{label} {f[col]:+.1f}%" for label, col in
-                              (("รายได้", "revenue_yoy_pct"), ("กำไร", "net_profit_yoy_pct")) if pd.notna(f[col])]
-                    st.caption(f"งบ {f['period']}: รายได้ **{f['revenue_mb']:,.0f} ลบ.**"
-                               + (f" · เทียบปีก่อน {' · '.join(growth)}" if growth else ""))
-
-
 CHANGE_ICON = {"set": "📢", "negative": "⚠️", "financials": "💰", "sentiment": "📉", "reviews": "⭐",
                "promotion": "🏷️", "volume": "🆕", "price_move": "📈"}
 
@@ -172,7 +128,7 @@ def changes_box(res):
     high = [c for c in changes if c["level"] == "high"]
     info = [c for c in changes if c["level"] != "high"]
     with st.container(border=True):
-        st.markdown("##### อะไรเปลี่ยนไปตั้งแต่รอบก่อน" + (f"  :red-badge[สำคัญ {len(high)}]" if high else ""))
+        st.markdown("##### What Changed Since Last Run" + (f"  :red-badge[สำคัญ {len(high)}]" if high else ""))
         st.caption(f"รอบนี้เสร็จเมื่อ {fmt_time(res.get('run_at'))} · เทียบกับรอบล่าสุดก่อนหน้าของแต่ละบริษัท")
         if high:
             st.markdown("\n".join(line(c) for c in high))
@@ -182,7 +138,7 @@ def changes_box(res):
 
 
 def glossary():
-    with st.popover("คำศัพท์", icon=":material/help:", width="stretch"):
+    with st.popover("Glossary", icon=":material/help:", width="stretch"):
         for term, text in GLOSSARY.items():
             st.markdown(f"**{term}** — {text}")
 
@@ -192,22 +148,22 @@ def glossary():
 def tab_summary(res, v, f, active, scope, on_report):
     left, right = st.columns([3, 2], gap="large")
     with left:
-        title = f"ข้อเสนอแนะสำหรับ {res['self_name']}" if res["self_name"] else "รายงานสรุป"
+        title = f"Recommendations for {res['self_name']}" if res["self_name"] else "Summary Report"
         st.markdown(f"##### {title}")
         report_scope = res.get("report_scope")
         st.caption(f"เขียนโดย LLM เมื่อ {fmt_time(res['report_at'])} จากตัวเลขในหน้านี้เท่านั้น · "
                    + (f"ขอบเขต: {report_scope}" if report_scope else "จากข้อมูลทั้งหมดของรอบวิเคราะห์"))
         if active and report_scope != scope:
             st.info("รายงานนี้ไม่ได้เขียนจากตัวกรองปัจจุบัน", icon=":material/info:")
-            if st.button("เขียนรายงานใหม่ตามตัวกรองนี้", icon=":material/edit_note:",
+            if st.button("Rewrite report for this filter", icon=":material/edit_note:",
                          help="ใช้ LLM 1 ครั้ง เขียนจากตัวเลขที่กรองแล้ว"):
                 with friendly_errors(), st.spinner("กำลังเขียนรายงาน..."):
                     rewrite_report(res, v, scope, on_report)
                     st.rerun()
         st.markdown(res["report"])
-        nav.link("ask", "ถามเพิ่มเกี่ยวกับผลนี้", icon=":material/forum:")
+        nav.link("ask", "Ask about these results", icon=":material/forum:")
     with right:
-        st.markdown("##### น้ำเสียงข่าว")
+        st.markdown("##### News Sentiment")
         if v["b"].empty:
             st.caption("ไม่มีข่าวตามตัวกรองนี้")
             return
@@ -244,7 +200,7 @@ def key_points(res, v):
     if not points:
         return
     with st.container(border=True):
-        st.markdown("##### สิ่งที่ควรรู้")
+        st.markdown("##### Key Takeaways")
         st.markdown("\n".join(f"- {p}" for p in points[:5]))
         st.caption("คิดจากข้อมูลโดยระบบ ไม่ใช่ LLM · รายละเอียดอยู่ในแท็บด้านล่าง")
 
@@ -287,11 +243,11 @@ def tab_gap(v):
         insights.show(st, behind or ["ยังไม่พบจุดที่ตามชัดเจน"])
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("##### หมวดข่าว: เราเน้นต่างจากคู่แข่งตรงไหน")
+        st.markdown("##### Topic Gap")
         st.altair_chart(charts.gap_chart(gap, "category", self_name), width="stretch")
         st.caption("หมวดคิดเป็น % ของข่าวแต่ละบริษัท มาก/น้อยกว่าไม่ได้แปลว่าดีหรือแย่")
     with right:
-        st.markdown("##### น้ำเสียงข่าว: เราดีหรือแย่กว่า")
+        st.markdown("##### Sentiment Gap")
         st.altair_chart(charts.gap_chart(gap, "sentiment", self_name), width="stretch")
     with st.expander("ตารางส่วนต่างทั้งหมด"):
         table = gap.copy()
@@ -355,26 +311,26 @@ def _csv(df):
 
 
 def downloads(res, v, title):
-    with st.popover("ดาวน์โหลด", icon=":material/download:", width="stretch"):
-        st.download_button("รายงาน Word (.docx)",
+    with st.popover("Download", icon=":material/download:", width="stretch"):
+        st.download_button("Report as Word (.docx)",
                            export.report_docx(res["report"], f"Competitor Compare: {title}",
                                               f"เขียนเมื่อ {fmt_time(res['report_at'])} · ทุกตัวเลขมาจากข้อมูลที่ระบบดึงมา "
                                               "ลิงก์ [n] เปิดแหล่งที่มาได้"),
                            f"report_{res['report_id']}.docx",
                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                            icon=":material/description:", on_click="ignore", width="stretch")
-        st.download_button("รายงาน Markdown (.md)", res["report"], "report.md", "text/markdown",
+        st.download_button("Report as Markdown (.md)", res["report"], "report.md", "text/markdown",
                            icon=":material/article:", on_click="ignore", width="stretch")
-        st.download_button(f"ข้อมูลที่กรองแล้ว {len(v['df'])} รายการ (.csv)",
+        st.download_button(f"Filtered data, {len(v['df'])} rows (.csv)",
                            _csv(v["df"]) if not v["df"].empty else b"", "data.csv", "text/csv",
                            icon=":material/table:", on_click="ignore", width="stretch", disabled=v["df"].empty)
 
 
 def follow(res):
-    with st.popover("ติดตาม", icon=":material/notifications_active:", width="stretch"):
+    with st.popover("Follow", icon=":material/notifications_active:", width="stretch"):
         st.caption("บันทึกชุดนี้ ระบบจะดึงข้อมูลใหม่ตามเวลาที่ตั้ง แล้วบอกว่าอะไรเปลี่ยน")
         watch_panel.save_form(res)
-        nav.link("watch", "ตั้งเวลาและแจ้งเตือน")
+        nav.link("watch", "Schedule & alerts")
 
 
 def header(res):
@@ -397,22 +353,24 @@ def header(res):
 
 def show(res, on_report):
     title, fresh = header(res)
-    head, b1, b2, b3, b4, b5 = st.columns([4.6, 1.25, 1.2, 1.3, 1.45, 1.1], vertical_alignment="center")
+    head, b_new, b_dl = st.columns([5, 1.4, 1.4], vertical_alignment="center")
     head.markdown(f"## {title}")
-    with b1:
+    if b_new.button("New Analysis", icon=":material/add_chart:", type="primary", width="stretch"):
+        nav.go("new")
+    tools = st.columns([1.2, 1.2, 1.2, 4.4])  # เครื่องมือรอง: ตัวกรอง ติดตาม คำศัพท์
+    with tools[0]:
         f = filter_bar(res)
     scope = describe(f)
     active = bool(scope)
     v = build_view(res, f)
-    with b2:
-        follow(res)
-    with b3:
+    with b_dl:
         downloads(res, v, title)
-    if b4.button("วิเคราะห์ใหม่", icon=":material/add_chart:", width="stretch"):
-        nav.go("new")
-    with b5:
+    with tools[1]:
+        follow(res)
+    with tools[2]:
         glossary()
-    st.caption(" · ".join(fresh))
+    with st.expander("ที่มาและความสดของข้อมูล", icon=":material/schedule:"):
+        st.caption(" · ".join(fresh))
     if res.get("focus_label"):
         st.caption(f"วิเคราะห์เฉพาะเรื่อง: **{res['focus_label']}**")
 
@@ -420,16 +378,15 @@ def show(res, on_report):
         c1, c2 = st.columns([6, 1], vertical_alignment="center")
         c1.info(f"กำลังกรอง: {scope} · เหลือ {len(v['df'])} จาก {len(res['df'])} รายการ",
                 icon=":material/filter_alt:")
-        c2.button("ล้าง", icon=":material/filter_alt_off:", on_click=reset_filters, width="stretch",
+        c2.button("Clear", icon=":material/filter_alt_off:", on_click=reset_filters, width="stretch",
                   key="flt_clear")
     if v["df"].empty and v["fin"].empty and v["internal"].empty:
         st.warning("ไม่มีข้อมูลตามตัวกรองนี้ ลองขยายช่วงเวลาหรือกด “ล้าง”")
         return
 
     highlights(res, v)
-    kpi_cards(v)
     has_gap = bool(v["self_name"]) and not v["gap"].empty
-    names = ["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["เจาะลึก", "ข้อมูลทั้งหมด"]
+    names = ["Summary"] + (["Us vs Competitors"] if has_gap else []) + ["Deep Dive", "All Data"]
     renders = ([lambda: tab_summary(res, v, f, active, scope, on_report)]
                + ([lambda: tab_gap(v)] if has_gap else [])
                + [lambda: tab_deep(res, v), lambda: tab_data(v)])

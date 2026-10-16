@@ -18,14 +18,14 @@ def _page(target):
     import streamlit as st
 
     from ui import nav, state as s
-    from ui.pages import accuracy, ask, companies, internal, overview, setup, watch
+    from ui.pages import accuracy, ask, companies, guide, internal, overview, setup, watch
 
     if "result" not in st.session_state:
         st.session_state.result = s.restore_last_result()
     st.navigation(nav.build(), position="hidden")
     target = st.session_state.get("_target", target)  # เทสเปลี่ยนหน้าได้ระหว่างรอบ
     {"overview": overview, "new": setup, "ask": ask, "watch": watch, "internal": internal,
-     "companies": companies, "accuracy": accuracy}[target].render()
+     "companies": companies, "accuracy": accuracy, "guide": guide}[target].render()
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def run(target):
     return at.run()
 
 
-@pytest.mark.parametrize("target", ["overview", "new", "ask", "watch", "internal", "companies", "accuracy"])
+@pytest.mark.parametrize("target", ["overview", "new", "ask", "watch", "internal", "companies", "accuracy", "guide"])
 def test_every_page_opens(demo_db, target):
     at = run(target)
     assert not at.exception, at.exception
@@ -57,15 +57,15 @@ def test_every_page_opens(demo_db, target):
 def test_overview_shows_summary_first(demo_db):
     at = run("overview")
     text = " ".join(m.value for m in at.markdown)
-    assert "สิ่งที่ควรรู้" in text
-    assert [t.label for t in at.tabs][:1] == ["สรุป"]
-    assert "ถามข้อมูล" not in [t.label for t in at.tabs]  # ย้ายไปเป็นหน้าแยก
+    assert "Key Takeaways" in text
+    assert [t.label for t in at.tabs][:1] == ["Summary"]
+    assert "Ask Data" not in [t.label for t in at.tabs]  # ย้ายไปเป็นหน้าแยก
 
 
 def test_start_disabled_until_two_competitors(demo_db):
     at = run("new")
     at.multiselect(key="comp_input").set_value(["MC"]).run()
-    start = next(b for b in at.button if b.label == "เริ่มวิเคราะห์")
+    start = next(b for b in at.button if b.label == "Start Analysis")
     assert start.disabled
     assert "คู่แข่ง 2–5 ราย" in " ".join(m.value for m in at.markdown)
 

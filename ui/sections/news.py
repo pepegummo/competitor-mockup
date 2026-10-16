@@ -22,14 +22,14 @@ def section_reviews(v):
     insights.show(st, insights.reviews(v["reviews"]))
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("##### คะแนนเฉลี่ย (ดาว)")
+        st.markdown("##### Average Rating (stars)")
         st.altair_chart(charts.stars_chart(r, v["self_name"]), width="stretch")
     with right:
-        st.markdown("##### น้ำเสียงของรีวิว")
+        st.markdown("##### Review Sentiment")
         sent = (pd.crosstab(r["company"], r["sentiment"], normalize="index") * 100).round(1)
         sent = sent.reindex(columns=["positive", "neutral", "negative"], fill_value=0)
         st.altair_chart(charts.sentiment_chart(sent, v["self_name"]), width="stretch")
-    st.markdown("##### รีวิวล่าสุด")
+    st.markdown("##### Latest Reviews")
     st.dataframe(
         r.sort_values("published_dt", ascending=False),
         hide_index=True, width="stretch", height=380,
@@ -50,15 +50,15 @@ def section_trends(v):
                "(แต่ละรอบดึงได้เฉพาะข่าวล่าสุดของแต่ละแหล่ง)")
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("##### จำนวนข่าวต่อสัปดาห์")
+        st.markdown("##### News per Week")
         st.altair_chart(charts.weekly_volume_chart(news, v["self_name"]), width="stretch")
     with right:
-        st.markdown("##### ข่าวลบต่อสัปดาห์ (%)")
+        st.markdown("##### Negative News per Week (%)")
         st.altair_chart(charts.weekly_negative_chart(news, v["self_name"]), width="stretch")
         st.caption("แสดงเฉพาะสัปดาห์ที่มีข่าวอย่างน้อย 3 ข่าว")
     reviews = v["df"][v["df"]["source_type"] == "review"]
     if reviews["rating"].notna().sum() >= 5:
-        st.markdown("##### คะแนนรีวิวเฉลี่ยต่อสัปดาห์")
+        st.markdown("##### Average Review Rating per Week")
         st.altair_chart(charts.weekly_stars_chart(reviews, v["self_name"]), width="stretch")
 
 

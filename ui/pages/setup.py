@@ -12,7 +12,7 @@ from ui.labels import CATEGORY_TH, MODES
 def _step_who():
     """คืน (โหมด, บริษัทเรา, คู่แข่ง)"""
     with st.container(border=True):
-        st.markdown("##### ① เทียบใครบ้าง")
+        st.markdown("##### ① Who to Compare (required)")
         keys = list(MODES)
         mode = st.segmented_control("รูปแบบ", keys, format_func=lambda k: MODES[k][0], key="mode_input",
                                     label_visibility="collapsed") or "compare"
@@ -41,7 +41,7 @@ def _step_who():
             competitors = [c for c in competitors if c != self_name]
             company_picker.peer_button(self_name or (competitors[0] if competitors else None))
 
-        st.toggle("รวมบริษัทในเครือ", key="with_groups",
+        st.toggle("Include subsidiaries", key="with_groups",
                   help="เช่น CP → CPALL, CPF, CPAXT · PTT → PTTEP, OR, GC วิเคราะห์แยกเป็นรายบริษัท "
                        "(ไม่นับเป็นคู่แข่ง) ตรวจความเป็นเจ้าของจากผู้ถือหุ้นใหญ่ใน SET")
     return mode, self_name, competitors
@@ -50,7 +50,7 @@ def _step_who():
 def _step_focus():
     cats, kw = st.session_state.focus_cats or [], st.session_state.focus_kw.strip()
     chosen = [CATEGORY_TH[c] for c in cats] + ([kw] if kw else [])
-    with st.expander("② สนใจเรื่องอะไร · " + (", ".join(chosen) if chosen else "ทุกเรื่อง"),
+    with st.expander("② Topics (optional) · " + (", ".join(chosen) if chosen else "ทุกเรื่อง"),
                      icon=":material/filter_center_focus:"):
         st.pills("หมวด", state.FOCUS_CATEGORIES, format_func=CATEGORY_TH.get, selection_mode="multi",
                  key="focus_cats", help="เลือกแล้วจะค้นข่าวหมวดนั้นเพิ่ม และวิเคราะห์เฉพาะหมวดที่เลือก")
@@ -63,7 +63,7 @@ def _step_focus():
 def _step_sources(mode):
     picked = st.session_state.src_pick or []
     label = "ทุกแหล่ง" if len(picked) == len(ALL_SOURCES) else f"{len(picked)} จาก {len(ALL_SOURCES)} แหล่ง"
-    with st.expander(f"③ ข้อมูลจากไหน · {label}", icon=":material/database:"):
+    with st.expander(f"③ Data Sources (optional) · {label}", icon=":material/database:"):
         st.pills("แหล่งข้อมูล", list(ALL_SOURCES), format_func=ALL_SOURCES.get, selection_mode="multi",
                  key="src_pick")
         st.checkbox("ดึงเนื้อหาเต็มของข่าว", key="src_fulltext",
@@ -75,13 +75,13 @@ def _step_sources(mode):
                   help="รีวิวล่าสุดต่อแอปต่อสโตร์ ยิ่งมากยิ่งใช้ LLM มาก")
         if mode == "discover":
             st.text_input("ประเทศ", key="country")
-        nav.link("companies", "ตรวจ/แก้แหล่งข้อมูลของแต่ละบริษัท (ชื่อแอป ชื่อหุ้น เว็บไซต์)")
+        nav.link("companies", "Review sources per company (apps, ticker, website)")
 
 
 def confirm_panel(disc):
     """แสดงรายชื่อที่ระบบหาได้ ให้ผู้ใช้ติ๊กเลือก/เพิ่มเอง คืน (กดยืนยันไหม, รายชื่อ, origins)"""
     r = disc["result"]
-    st.markdown(f"##### คู่แข่งที่พบสำหรับ {disc['company']}")
+    st.markdown(f"##### Competitors Found for {disc['company']}")
     if not r["found"]:
         st.warning(r["message"])
         return False, [], {}
@@ -108,7 +108,7 @@ def confirm_panel(disc):
     typed = [n.strip() for n in extra.split(",") if n.strip() and n.strip() not in picked]
     names = picked + typed
     too_many = len(names) > 10
-    ok = st.button(f"ยืนยันและวิเคราะห์ ({len(names)} ราย)", type="primary",
+    ok = st.button(f"Confirm and analyze ({len(names)})", type="primary",
                    disabled=not names or too_many, icon=":material/check:")
     if too_many:
         st.caption("เลือกได้สูงสุด 10 ราย")
@@ -117,7 +117,7 @@ def confirm_panel(disc):
 
 
 def _discover_flow(self_name):
-    find = st.button("หาคู่แข่ง", type="primary", disabled=not self_name or state.job_running(),
+    find = st.button("Find competitors", type="primary", disabled=not self_name or state.job_running(),
                      icon=":material/search:")
     st.caption("ใช้ LLM 3 ครั้ง + ค้นข่าว แล้วให้คุณยืนยันรายชื่อก่อนวิเคราะห์"
                if self_name else "กรอกชื่อบริษัทของเราเพื่อเริ่ม")
@@ -167,7 +167,7 @@ def _start(mode, self_name, competitors):
                         + (" · ดึงเนื้อหาเต็ม" if opts["fulltext"] else ""))
             c1.caption("รันเบื้องหลัง ปกติ 1–3 นาที" + (" (ดึงเนื้อหาเต็มนานขึ้นหลายนาที)" if opts["fulltext"] else "")
                        + " · ใช้ LLM ประมาณ 1 ครั้งต่อข่าวใหม่ 10 ข่าว + 1 ครั้งสำหรับรายงาน")
-        go = c2.button("เริ่มวิเคราะห์", type="primary", disabled=bool(problems),
+        go = c2.button("Start Analysis", type="primary", disabled=bool(problems),
                        icon=":material/play_arrow:", width="stretch")
     if go:
         with friendly_errors():
@@ -178,8 +178,9 @@ def _start(mode, self_name, competitors):
 
 def render():
     state.restore_form()
-    st.title("วิเคราะห์ใหม่")
-    st.caption("ใส่แค่ขั้น ① ก็เริ่มได้ ขั้น ② และ ③ ไม่บังคับ")
+    st.title("New Analysis")
+    st.caption("3 ขั้น: ① เลือกบริษัท (ต้องทำ) → ② เลือกเรื่องที่สนใจ (ไม่บังคับ) → ③ เลือกแหล่งข้อมูล (ไม่บังคับ) "
+               "แล้วกด “Start Analysis” ด้านล่าง · ดูรายละเอียดที่หน้า “How to Use”")
     mode, self_name, competitors = _step_who()
     _step_focus()
     _step_sources(mode)

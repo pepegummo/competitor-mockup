@@ -5,7 +5,7 @@ from ui import internal_panel, state
 
 
 def render():
-    st.title("ข้อมูลภายใน")
+    st.title("Internal Data")
     if "internal_llm" not in st.session_state:  # widget ถูกลบเมื่ออยู่หน้าอื่น คืนค่าจากที่จำไว้
         st.session_state.internal_llm = state.internal_llm_on()
     res = st.session_state.result

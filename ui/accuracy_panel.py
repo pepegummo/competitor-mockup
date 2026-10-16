@@ -61,12 +61,12 @@ def _card(item):
         c2.selectbox("น้ำเสียงที่ถูก", sents, index=sents.index(item["sentiment"]) if item["sentiment"] in sents else 1,
                      format_func=SENTIMENT_TH.get, key=f"lab_sent_{fid}")
         b1, b2, b3 = st.columns([2, 2, 1])
-        b1.button(f"เกี่ยวกับ {item['company']}", type="primary", icon=":material/check:", width="stretch",
+        b1.button(f"About {item['company']}", type="primary", icon=":material/check:", width="stretch",
                   on_click=_save, args=(item, True), key=f"lab_yes_{fid}",
                   help="บันทึกพร้อมหมวดและน้ำเสียงที่เลือกด้านบน")
-        b2.button("ไม่เกี่ยว (ชื่อตรงแต่เป็นเรื่องอื่น)", icon=":material/close:", width="stretch",
+        b2.button("Not relevant (same name, different topic)", icon=":material/close:", width="stretch",
                   on_click=_save, args=(item, False), key=f"lab_no_{fid}")
-        b3.button("ข้าม", width="stretch", on_click=_skip, key=f"lab_skip_{fid}")
+        b3.button("Skip", width="stretch", on_click=_skip, key=f"lab_skip_{fid}")
 
 
 def render():

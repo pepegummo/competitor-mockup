@@ -3,7 +3,6 @@ import os
 
 import streamlit as st
 
-from core import db
 from ui import nav, results, state
 from ui.common import friendly_errors
 from ui.labels import PRESETS
@@ -23,37 +22,27 @@ def welcome():
     st.title("Competitor Compare")
     st.markdown("ดูว่าคู่แข่งทำอะไรอยู่ จากข่าว ประกาศตลาดหลักทรัพย์ รีวิวแอป และงบการเงิน "
                 "สรุปเป็นรายงานพร้อมลิงก์ที่มาทุกข้อ")
-    st.markdown("##### เริ่มเร็วด้วยชุดตัวอย่าง")
+    st.markdown("##### Quick Start with Presets")
+    st.caption("กดปุ่มเดียวเริ่มวิเคราะห์ได้เลย ระบบดึงข้อมูลเบื้องหลังประมาณ 1–3 นาที แล้วเปิดผลให้เอง")
     busy = state.job_running()
     for col, (title, icon, names) in zip(st.columns(len(PRESETS)), PRESETS):
         with col.container(border=True):
             st.markdown(f"**{title}**")
             st.caption(" · ".join(names))
-            if st.button("วิเคราะห์ชุดนี้", key=f"preset_{title}", icon=icon, disabled=busy, width="stretch"):
+            if st.button("Analyze this set", key=f"preset_{title}", icon=icon, disabled=busy, width="stretch"):
                 _start_preset(names)
                 st.rerun()
     c1, c2 = st.columns([1, 3], vertical_alignment="center")
-    if c1.button("ตั้งค่าเอง", type="primary", icon=":material/add_chart:", width="stretch"):
+    if c1.button("Set up yourself", type="primary", icon=":material/add_chart:", width="stretch"):
         nav.go("new")
     c2.caption("เลือกบริษัทเอง เทียบกับบริษัทของเรา หรือให้ระบบหาคู่แข่งให้")
-
-    st.markdown("##### ระบบทำอะไรบ้าง")
-    steps = [
-        ("1. ดึงข้อมูล", "ข่าว ข่าวแจ้งตลาด รีวิวแอป และงบการเงินล่าสุดจาก SET ของแต่ละบริษัท"),
-        ("2. จัดหมวด", "LLM ตัดข่าวที่ไม่เกี่ยว แยกหมวดและน้ำเสียง (บวก/กลาง/ลบ) ข่าวที่เคยจัดแล้วไม่ถูกส่งซ้ำ"),
-        ("3. สรุปผล", "นับตัวเลขเปรียบเทียบด้วยระบบ แล้วให้ LLM เขียนรายงานจากตัวเลขนั้น ถามต่อได้ในหน้าถามข้อมูล"),
-    ]
-    for col, (title, text) in zip(st.columns(3), steps):
-        with col.container(border=True):
-            st.markdown(f"**{title}**")
-            st.caption(text)
+    nav.link("guide", "Not sure where to start? See How to Use")
 
 
 def render():
     if os.environ.get("CC_DEMO"):
-        st.info(f"โหมดเดโม · ข้อมูลชุดตัวอย่างใน `{db.DATA_DIR.name}/` (ผลวิเคราะห์ คำถามตัวอย่าง ตัวเลข SET "
-                "เก็บไว้แล้ว เปิดได้โดยไม่ต้องใช้เน็ตหรือเครื่อง LLM) · คำถามใหม่และการวิเคราะห์ใหม่ยังต้องใช้เน็ต",
-                icon=":material/slideshow:")
+        st.caption(f":material/slideshow: โหมดเดโม · ใช้ข้อมูลตัวอย่าง เปิดดูได้โดยไม่ต้องใช้เน็ต "
+                   "· คำถามใหม่และการวิเคราะห์ใหม่ยังต้องใช้เน็ต")
     if state.job_running():
         state.job_progress()
     for note in st.session_state.pop("job_notes", []):

@@ -317,7 +317,7 @@ def job_watch():
     lines = _job_lines(job)
     st.session_state.job_notes = [t for k, t in lines if k == "warn"]
     if job["status"] == "done" and job["run_id"] and open_run(job["run_id"]):
-        st.session_state.toast = "วิเคราะห์เสร็จแล้ว เปิดผลในหน้าภาพรวม"
+        st.session_state.toast = "วิเคราะห์เสร็จแล้ว เปิดผลในหน้า Overview"
     else:
         st.session_state.job_notes.append(job["error"] or "วิเคราะห์ไม่สำเร็จ")
     st.rerun(scope="app")
@@ -335,6 +335,6 @@ def job_progress():
     with st.status(f"{label} · {seconds} วินาที", expanded=True, state="running"):
         _render_log(lines)
         st.caption("รันเบื้องหลัง ไปหน้าอื่นระหว่างรอได้ เสร็จแล้วระบบเปิดผลให้เอง")
-        if seconds > 900 and st.button("เลิกรอ", key="job_cancel"):
+        if seconds > 900 and st.button("Stop waiting", key="job_cancel"):
             st.session_state.pop("job_id", None)
             st.rerun(scope="app")

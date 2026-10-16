@@ -12,7 +12,7 @@ BANK_COLUMNS = ("nii_mb", "nii_yoy_pct", "fee_income_mb", "fee_income_yoy_pct", 
 
 
 def section_banks(banks, self_name):
-    st.markdown("##### ตัวชี้วัดธนาคาร")
+    st.markdown("##### Bank Metrics")
     st.caption("คิดจากงบย่อที่ยื่น SET · ตัวเลขต่อปีแปลงจากงบสะสม (เช่น 6 เดือน × 2) · "
                "ไม่มี NPL เพราะงบย่อของ SET ไม่มีข้อมูลนี้")
     st.altair_chart(charts.bank_ratio_chart(banks, self_name), width="stretch")
@@ -49,12 +49,12 @@ def section_finance(res, v):
     insights.show(st, insights.finance(fin))
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("##### รายได้และกำไรสุทธิรายปี")
+        st.markdown("##### Annual Revenue & Net Profit")
         chart = charts.finance_history_chart(raw, self_name)
         if chart is not None:
             st.altair_chart(chart, width="stretch")
     with right:
-        st.markdown("##### เทียบงบรอบล่าสุด (%)")
+        st.markdown("##### Latest Financials Comparison (%)")
         st.altair_chart(charts.finance_ratio_chart(fin, self_name), width="stretch")
         st.caption("รายได้/กำไรโต = เทียบช่วงเดียวกันปีก่อน (ถ้าปีก่อนขาดทุนจะไม่แสดง) · ROE มาจากงบทั้งปีล่าสุด")
     order = charts.company_order(list(fin.index), self_name)

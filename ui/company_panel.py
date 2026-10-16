@@ -74,7 +74,7 @@ def _edit_form(row, version):
         store = st.text_input("App Store id", row["appstore_id"] or "", help="ตัวเลขใน URL apps.apple.com/.../id<ตัวเลข>")
         play = st.text_input("Google Play id", row["play_app_id"] or "", help="ค่า id= ใน URL ของ Google Play")
         site = st.text_input("URL หน้าข่าว/โปรโมชัน", row["website"] or "")
-        if st.form_submit_button("บันทึก", type="primary", icon=":material/save:"):
+        if st.form_submit_button("Save", type="primary", icon=":material/save:"):
             store, play = store.strip(), play.strip()
             db.update_company_sources(
                 row["name"], [a.strip() for a in aliases.split(",") if a.strip()], play, store, site.strip(),
@@ -99,7 +99,7 @@ def render(names, self_name, global_sources, advanced, members=None):
     title = "แหล่งข้อมูลของแต่ละบริษัท" + (f" · {missing_apps} บริษัทยังไม่ได้ตั้งค่าแอป" if missing_apps else "")
     st.subheader(title, divider="gray")
     c1, c2 = st.columns([1.4, 3])
-    if c1.button("หาชื่อเรียก ชื่อหุ้น และแอปอัตโนมัติ", icon=":material/auto_fix_high:",
+    if c1.button("Auto-detect names, tickers and apps", icon=":material/auto_fix_high:",
                  help="ใช้ LLM 1 ครั้ง + ค้น App Store/Google Play เติมเฉพาะช่องที่ยังว่าง"):
         with friendly_errors(), st.spinner("กำลังค้นหา..."):
             _autofill(names)
@@ -127,5 +127,5 @@ def render(names, self_name, global_sources, advanced, members=None):
                     else:
                         icon = ":green[:material/check_circle:]" if on else ":gray[:material/remove_circle_outline:]"
                         st.markdown(f"{icon} {label}")
-                with st.popover("แก้ไข", icon=":material/edit:", width="stretch"):
+                with st.popover("Edit", icon=":material/edit:", width="stretch"):
                     _edit_form(row, version)

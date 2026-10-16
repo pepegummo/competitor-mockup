@@ -5,13 +5,13 @@ from ui import company_panel, group_panel, maintenance_panel, nav, state
 
 
 def render():
-    st.title("บริษัทและแหล่งข้อมูล")
+    st.title("Companies & Sources")
     names, self_name = state.upcoming()
     f = state.form()
     if not names:
         st.info("ยังไม่ได้เลือกบริษัท เลือกในหน้าวิเคราะห์ใหม่ก่อน แล้วตั้งค่าแหล่งข้อมูลของแต่ละบริษัทได้ที่นี่",
                 icon=":material/info:")
-        nav.link("new", "ไปหน้าวิเคราะห์ใหม่")
+        nav.link("new", "Go to New Analysis")
     else:
         st.caption("บริษัทที่จะวิเคราะห์รอบถัดไป: " + ", ".join(names) + " · เปลี่ยนรายชื่อได้ในหน้าวิเคราะห์ใหม่")
         members = {}
@@ -20,5 +20,5 @@ def render():
             group_panel.register(names)
             members = group_panel.picked(names)
         company_panel.render(names + list(members), self_name, f["src_pick"] or [], True, members)
-    st.subheader("ดูแลข้อมูล", divider="gray")
+    st.subheader("Maintenance", divider="gray")
     maintenance_panel.render(names)

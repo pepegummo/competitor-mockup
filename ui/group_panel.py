@@ -75,7 +75,7 @@ def render(names):
     title = "บริษัทในเครือ" + (f" · เลือก {len(chosen)} บริษัท" if chosen else "")
     with st.expander(title, icon=":material/account_tree:", expanded=bool(pending) or not chosen):
         c1, c2 = st.columns([1.4, 3])
-        label = "หาบริษัทในเครือ" if pending else "หาใหม่"
+        label = "Find subsidiaries" if pending else "Find again"
         if c1.button(label, icon=":material/travel_explore:", key="grp_find",
                      help="ใช้ LLM 1 ครั้ง แล้วตรวจผู้ถือหุ้นใหญ่ของแต่ละหุ้นกับ SET"):
             with friendly_errors(), st.spinner("กำลังหาบริษัทในเครือ..."):
