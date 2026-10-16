@@ -27,12 +27,6 @@ def render():
             with c2:
                 nav.link(page, label)
 
-    st.subheader("Which Page to Use", divider="gray")
-    st.markdown(
-        "- **ใช้ประจำ:** Overview · New Analysis · Ask Data · Auto Monitoring\n"
-        "- **ตั้งค่า (ใช้เมื่อจำเป็น):** Internal Data (อัปโหลดตัวเลข/เอกสารของเราเอง) · "
-        "Companies & Sources (แก้ชื่อแอป ชื่อหุ้น รวมบริษัทซ้ำ) · Accuracy Check (ตรวจว่า LLM ตัดสินข่าวถูกไหม)")
-
     st.subheader("Glossary", divider="gray")
     with st.expander("ความหมายของคำที่เจอในรายงาน", icon=":material/help:"):
         for term, text in GLOSSARY.items():
