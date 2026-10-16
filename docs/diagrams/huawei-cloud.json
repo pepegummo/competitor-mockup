@@ -8,28 +8,260 @@
     "quality_profile": "showcase"
   },
   "components": [
-    { "id": "users", "type": "external", "label": "Team + advisor", "sublabel": "browser", "pos": [30, 215], "size": [124, 62], "icon": "person" },
-    { "id": "proxy", "type": "security", "label": "Caddy proxy", "sublabel": "HTTPS · optional login", "pos": [240, 215], "size": [136, 62], "tag": "EIP :443" },
-    { "id": "web", "type": "frontend", "label": "web", "sublabel": "Streamlit app.py", "pos": [470, 215], "size": [136, 62], "tag": "container" },
-    { "id": "ocr", "type": "backend", "label": "ocr", "sublabel": "FastAPI + Tesseract", "pos": [470, 50], "size": [136, 62], "tag": "profile ocr" },
-    { "id": "worker", "type": "backend", "label": "worker", "sublabel": "MONITOR_AT + jobs", "pos": [470, 385], "size": [136, 62], "tag": "container" },
-    { "id": "volume", "type": "database", "label": "app_data volume", "sublabel": "raw JSON · PDFs · log", "pos": [240, 385], "size": [136, 62], "tag": "EVS disk" },
-    { "id": "rds", "type": "database", "label": "RDS PostgreSQL", "sublabel": "pgvector", "pos": [720, 300], "size": [140, 62], "tag": "private subnet" },
-    { "id": "ext", "type": "external", "label": "Outside services", "sublabel": "LLM · news · SET", "pos": [720, 470], "size": [140, 62], "tag": "via EIP" }
+    {
+      "id": "users",
+      "type": "external",
+      "label": "Team + advisor",
+      "sublabel": "browser",
+      "pos": [
+        30,
+        385
+      ],
+      "size": [
+        124,
+        62
+      ],
+      "icon": "person"
+    },
+    {
+      "id": "hub",
+      "type": "external",
+      "label": "Docker Hub",
+      "sublabel": "quix07/competitor-*",
+      "pos": [
+        470,
+        50
+      ],
+      "size": [
+        124,
+        62
+      ],
+      "tag": "images"
+    },
+    {
+      "id": "proxy",
+      "type": "security",
+      "label": "Caddy proxy",
+      "sublabel": "HTTPS · optional login",
+      "pos": [
+        240,
+        385
+      ],
+      "size": [
+        136,
+        62
+      ],
+      "tag": "EIP :443"
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "web",
+      "sublabel": "Streamlit app.py",
+      "pos": [
+        470,
+        385
+      ],
+      "size": [
+        136,
+        62
+      ],
+      "tag": "container"
+    },
+    {
+      "id": "ocr",
+      "type": "backend",
+      "label": "ocr",
+      "sublabel": "FastAPI + Tesseract",
+      "pos": [
+        240,
+        220
+      ],
+      "size": [
+        136,
+        62
+      ],
+      "tag": "profile ocr"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "worker",
+      "sublabel": "MONITOR_AT + jobs",
+      "pos": [
+        470,
+        555
+      ],
+      "size": [
+        136,
+        62
+      ],
+      "tag": "container"
+    },
+    {
+      "id": "volume",
+      "type": "database",
+      "label": "app_data volume",
+      "sublabel": "raw JSON · PDFs · log",
+      "pos": [
+        240,
+        555
+      ],
+      "size": [
+        136,
+        62
+      ],
+      "tag": "EVS disk"
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "db container",
+      "sublabel": "PostgreSQL + pgvector",
+      "pos": [
+        700,
+        470
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "tag": "option B · localdb"
+    },
+    {
+      "id": "rds",
+      "type": "database",
+      "label": "RDS PostgreSQL",
+      "sublabel": "pgvector",
+      "pos": [
+        960,
+        400
+      ],
+      "size": [
+        150,
+        200
+      ],
+      "tag": "option A · private"
+    },
+    {
+      "id": "ext",
+      "type": "external",
+      "label": "Outside services",
+      "sublabel": "LLM · news · SET",
+      "pos": [
+        960,
+        730
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "tag": "via EIP"
+    }
   ],
   "boundaries": [
-    { "kind": "region", "label": "Huawei Cloud AP-Bangkok VPC", "wraps": ["proxy", "web", "ocr", "worker", "volume", "rds"], "pad": 22 },
-    { "kind": "security-group", "label": "ECS · Docker Compose", "wraps": ["proxy", "web", "ocr", "worker", "volume"], "pad": 14 }
+    {
+      "kind": "region",
+      "label": "Huawei Cloud AP-Bangkok VPC",
+      "wraps": [
+        "proxy",
+        "web",
+        "ocr",
+        "worker",
+        "volume",
+        "db",
+        "rds"
+      ],
+      "pad": 22
+    },
+    {
+      "kind": "security-group",
+      "label": "ECS · Docker Compose",
+      "wraps": [
+        "proxy",
+        "web",
+        "ocr",
+        "worker",
+        "volume",
+        "db"
+      ],
+      "pad": 14
+    }
   ],
   "connections": [
-    { "id": "c-https", "from": "users", "to": "proxy", "label": "HTTPS", "variant": "emphasis" },
-    { "id": "c-proxy", "from": "proxy", "to": "web", "label": ":8501", "variant": "emphasis" },
-    { "id": "c-ocr", "from": "web", "to": "ocr", "label": "PDF" },
-    { "id": "c-websql", "from": "web", "to": "rds", "label": "SQL", "variant": "emphasis" },
-    { "id": "c-files", "from": "worker", "to": "volume", "label": "raw · log" },
-    { "id": "c-uploads", "from": "web", "to": "volume", "label": "PDF uploads" },
-    { "id": "c-jobs", "from": "worker", "to": "rds", "label": "jobs · SQL" },
-    { "id": "c-out", "from": "worker", "to": "ext", "label": "fetch · LLM", "variant": "dashed" }
+    {
+      "id": "c-https",
+      "from": "users",
+      "to": "proxy",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-pull",
+      "from": "hub",
+      "to": "web",
+      "label": "docker pull",
+      "variant": "dashed"
+    },
+    {
+      "id": "c-proxy",
+      "from": "proxy",
+      "to": "web",
+      "label": ":8501",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-ocr",
+      "from": "web",
+      "to": "ocr",
+      "label": "PDF"
+    },
+    {
+      "id": "c-webrds",
+      "from": "web",
+      "to": "rds",
+      "label": "SQL (A)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-webdb",
+      "from": "web",
+      "to": "db",
+      "label": "SQL (B)",
+      "variant": "dashed"
+    },
+    {
+      "id": "c-files",
+      "from": "worker",
+      "to": "volume",
+      "label": "raw · log"
+    },
+    {
+      "id": "c-uploads",
+      "from": "web",
+      "to": "volume",
+      "label": "PDF uploads"
+    },
+    {
+      "id": "c-jobsrds",
+      "from": "worker",
+      "to": "rds",
+      "label": "jobs (A)"
+    },
+    {
+      "id": "c-jobsdb",
+      "from": "worker",
+      "to": "db",
+      "label": "jobs (B)",
+      "variant": "dashed"
+    },
+    {
+      "id": "c-out",
+      "from": "worker",
+      "to": "ext",
+      "label": "fetch · LLM",
+      "variant": "dashed"
+    }
   ],
   "cards": [
     {
@@ -37,9 +269,9 @@
       "title": "One ECS for the demo",
       "items": [
         "web and worker share one image; only the start command differs",
-        "ocr runs only with the compose profile, capped at 1.5 CPU / 1.5 GB",
-        "Images from Docker Hub (quix07) or SWR; files live on the app_data volume (back up with EVS snapshots)",
-        "No RDS yet: run the db container (pgvector/pgvector:pg16, profile localdb)"
+        "Pick one database: A = RDS (automatic backup) or B = db container on the ECS (cheaper, back up yourself)",
+        "COMPOSE_PROFILES in .env picks the extra containers: ocr for A, localdb,ocr for B",
+        "Images come from Docker Hub (quix07); files live on the app_data volume (back up with EVS snapshots)"
       ]
     },
     {
@@ -55,9 +287,9 @@
       "dot": "amber",
       "title": "Still to check",
       "items": [
-        "pgvector on RDS in AP-Bangkok (without it the app falls back to numpy)",
+        "pgvector on RDS in AP-Bangkok (without it the app falls back to numpy, or use option B)",
         "Whether the advisor's LLM endpoint accepts Huawei Cloud IPs",
-        "Move old SQLite data once with migrate_to_postgres.py"
+        "Steps 1-9 in DEPLOY.md cover both options"
       ]
     }
   ]

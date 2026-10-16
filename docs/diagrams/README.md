@@ -14,7 +14,7 @@
 |---|---|---|---|
 | [Analysis pipeline](analysis-pipeline.html) | dataflow | ภาพรวม: แหล่งข้อมูล → จัดหมวด → ตาราง → รายงาน | [architecture.md](../architecture.md) |
 | [Ask (RAG) sequence](ask-rag.html) | sequence | ถามข้อมูล: parse → similarity → ตัวเลข → คำตอบ | [ask.md](../systems/ask.md) |
-| [Huawei Cloud plan](huawei-cloud.html) | architecture | แผน deploy (ยังไม่ได้สร้าง) | [huawei-cloud.md](../huawei-cloud.md) |
+| [Huawei Cloud plan](huawei-cloud.html) | architecture | แผน deploy: ฐานข้อมูลแบบ A (RDS) หรือ B (container db) · ยังไม่ได้สร้าง | [huawei-cloud.md](../huawei-cloud.md) |
 | [Data collection](collect.html) | dataflow | ดึงข้อมูลและกันซ้ำ | [collect.md](../systems/collect.md) |
 | [Classification loop](classify.html) | workflow | จัดหมวดด้วย LLM + วนกลับจากการตรวจความแม่น | [classify.md](../systems/classify.md) |
 | [Background job](background-job.html) | sequence | ปุ่มเริ่มวิเคราะห์ → `monitor.py --job` (บนเครื่อง) หรือ `worker.py` (docker) → เปิดผลเอง | [analysis-report.md](../systems/analysis-report.md) |

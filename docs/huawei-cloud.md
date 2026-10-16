@@ -1,11 +1,13 @@
 # แผนขึ้น Huawei Cloud
 
 แบบสำหรับ **เดโม/ส่งงาน**: ผู้ใช้ไม่กี่คน (ทีม + อาจารย์) เน้นถูกและดูแลง่าย ทุกอย่างรันเป็น Docker บนเครื่อง ECS เครื่องเดียว
-ฐานข้อมูลแยกไปใช้ RDS PostgreSQL + pgvector · LLM ยังใช้ endpoint ของอาจารย์ · embedding (e5) รันใน container
+ฐานข้อมูล PostgreSQL + pgvector เลือกได้ 2 แบบ: RDS (แบบ A) หรือ container `db` บน ECS (แบบ B) · LLM ยังใช้ endpoint ของอาจารย์ · embedding (e5) รันใน container
 ภาพรวมของระบบตอนนี้ดู [`architecture.md`](architecture.md)
 
+> **ไฟล์นี้คือแผนและเหตุผลของการออกแบบ** · ขั้นตอนลงมือ (สร้าง resource ใน console → เปิดเว็บ) อยู่ใน [`DEPLOY.md`](../DEPLOY.md) เล่มเดียว
+>
 > **สถานะ:** เฟส 1 (Docker Compose + worker + Caddy) **ทำแล้ว** · เฟส 2 ส่วนฐานข้อมูล (PostgreSQL + pgvector, สคริปต์ย้ายข้อมูล) **ทำแล้ว**
-> ตั้ง `DATABASE_URL` ชี้ RDS หรือใช้ container `db` (`--profile localdb`) ไม่ตั้ง = SQLite แบบเดิม · ขั้นตอนอยู่ใน [`DEPLOY.md`](../DEPLOY.md)
+> image `quix07/competitor-app` / `competitor-ocr` อยู่บน Docker Hub · ตั้ง `DATABASE_URL` ชี้ RDS หรือใช้ container `db` (`COMPOSE_PROFILES=localdb,ocr`) ไม่ตั้ง = SQLite แบบเดิม
 > ไฟล์นอกฐานข้อมูล (ข้อมูลดิบ, PDF ที่อัปโหลด, log) เก็บใน volume `app_data` บนดิสก์ ECS (ไม่ใช้ OBS) · ยังไม่ได้สร้าง resource บน Huawei Cloud
 
 **Region:** AP-Bangkok (`ap-southeast-2`) ข้อมูลอยู่ในไทย และใกล้ผู้ใช้/แหล่งข่าวไทย
@@ -22,17 +24,20 @@ flowchart LR
             WORKER["worker<br/>รันรายวันตาม MONITOR_AT + หยิบงานจากตาราง jobs"]
             OCR["ocr<br/>Tesseract tha + pymupdf"]
             VOL[("volume app_data<br/>ดิสก์ EVS: ไฟล์ดิบ · PDF · log")]
+            DB[("แบบ B: container db<br/>PostgreSQL + pgvector<br/>COMPOSE_PROFILES=localdb,ocr")]
             PROXY --> WEB
             WEB -->|"PDF ที่อัปโหลด"| OCR
             WEB -->|"PDF ต้นฉบับ"| VOL
             WORKER -->|"ไฟล์ดิบ · log"| VOL
+            WEB -.->|"SQL (B)"| DB
+            WORKER -.->|"SQL (B)"| DB
         end
-        RDS[("RDS for PostgreSQL<br/>+ pgvector<br/>subnet ส่วนตัว")]
-        WEB --> RDS
-        WORKER --> RDS
+        RDS[("แบบ A: RDS for PostgreSQL<br/>+ pgvector<br/>subnet ส่วนตัว")]
+        WEB -->|"SQL (A)"| RDS
+        WORKER -->|"SQL (A)"| RDS
     end
     EIP --> PROXY
-    SWR["SWR<br/>Docker image"] -.->|"docker pull"| ECS
+    SWR["Docker Hub (หรือ SWR)<br/>Docker image"] -.->|"docker pull"| ECS
     WORKER -->|"ผ่าน EIP"| EXT["ภายนอก<br/>LLM อาจารย์ · Google News · RSS<br/>SET · App Store/Play · webhook"]
     WEB -->|"ผ่าน EIP"| EXT
     CE["Cloud Eye"] -.->|"เฝ้าดู"| ECS
@@ -40,6 +45,9 @@ flowchart LR
 ```
 
 ดูแบบโต้ตอบ (archify): [huawei-cloud.html](diagrams/huawei-cloud.html)
+
+**ฐานข้อมูลเลือก 1 แบบ:** แบบ A = RDS (backup อัตโนมัติ เหมาะใช้งานจริง) · แบบ B = container `db` บน ECS (ถูกกว่า ตั้งง่าย เหมาะเดโม แต่ต้องสำรองเอง)
+เลือกด้วย `DATABASE_URL` และ `COMPOSE_PROFILES` ใน `.env` (`ocr` สำหรับแบบ A · `localdb,ocr` สำหรับแบบ B)
 
 ทุกอย่างวิ่งออกเน็ตผ่าน EIP ของ ECS (เรียก LLM ดึงข่าว ส่งแจ้งเตือน) จึงไม่ต้องใช้ NAT Gateway
 RDS ไม่มี IP สาธารณะ รับการเชื่อมต่อจาก ECS เท่านั้น
@@ -52,7 +60,7 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 | **ECS** | รัน Docker Compose ทั้งหมด · ไฟล์ดิบ PDF ที่อัปโหลด และ log อยู่ใน volume `app_data` บนดิสก์ EVS ของเครื่องนี้ (สำรองด้วย snapshot) | 4 vCPU / 8 GB (torch + โมเดล e5 + Streamlit + งานวิเคราะห์) · Ubuntu 22.04 · ดิสก์ EVS 40 GB |
 | **EIP + Bandwidth** | IP สาธารณะ: รับผู้ใช้ และออกไป LLM/แหล่งข่าว | ~5 Mbit/s คิดตาม traffic |
 | **RDS for PostgreSQL** | แทน SQLite ทุกตาราง · extension `pgvector` เก็บเวกเตอร์และค้นความใกล้ | single instance 2 vCPU / 4 GB · ดิสก์ 40 GB · backup อัตโนมัติ 7 วัน |
-| **SWR** | เก็บ Docker image ส่วนตัว: build บนเครื่องเรา → push → ECS pull | organization เดียว |
+| SWR (ไม่บังคับ) | เก็บ Docker image แบบส่วนตัว · ตอนนี้ใช้ Docker Hub สาธารณะ (`quix07/*`) แทน ใช้ SWR เมื่อไม่อยากให้ image เป็นสาธารณะ | organization เดียว |
 | **Cloud Eye** | กราฟและแจ้งเตือน CPU / RAM / ดิสก์ ของ ECS และ RDS | ค่าเริ่มต้น + alarm ดิสก์ > 80% |
 | DEW / CSMS (ไม่บังคับ) | เก็บ `LLM_API_KEY` รหัส DB และ webhook แทนไฟล์ `.env` | เดโมใช้ `.env` บน ECS (`chmod 600`) ได้ |
 | OCR ของ Huawei (ทางเลือก) | ถ้า General Text OCR รองรับภาษาไทย ใช้แทน container `ocr` ได้ | ต้องทดสอบกับ PDF ไทยก่อน |
@@ -69,11 +77,11 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 | `proxy` | `caddy:2` | HTTPS (Let's Encrypt อัตโนมัติ) + basic auth เมื่อตั้ง `BASIC_AUTH_HASH` (ว่าง = ไม่มีรหัส ใช้ `deploy/Caddyfile` · มีค่า = `Caddyfile.auth`) · ส่งต่อ websocket ของ Streamlit | 80, 443 ออกนอก |
 | `web` | `competitor-app` | `streamlit run app.py` | 8501 ภายในเท่านั้น |
 | `worker` | `competitor-app` | `python worker.py`: ทุก 5 วินาทีหยิบงาน `queued` จากตาราง `jobs` (`claim_job`) แล้วรัน `monitor.run_job` · ถึงเวลา `MONITOR_AT` รันทุกชุดติดตามวันละครั้ง · เริ่มใหม่ = ปิดงานที่ค้าง `running` เป็น error | – |
-| `db` (profile `localdb`) | `pgvector/pgvector:pg16` | PostgreSQL + pgvector บน ECS เครื่องเดียวกัน ใช้แทน RDS ตอนทดสอบหรือยังไม่มี RDS | 5432 ภายในเท่านั้น |
-| `ocr` (profile `ocr`) | `competitor-ocr` (build จาก `ocr/`) | `POST /extract` รับ PDF คืนข้อความทีละหน้า: ใช้ข้อความในไฟล์ก่อน OCR (Tesseract `tha+eng`) เฉพาะหน้าที่เป็นภาพหรือข้อความเพี้ยน | 8000 ภายในเท่านั้น |
+| `db` (profile `localdb`) | `pgvector/pgvector:pg16` | แบบ B: PostgreSQL + pgvector บน ECS เครื่องเดียวกัน ใช้แทน RDS (เดโม / ยังไม่มี RDS) | 5432 ภายในเท่านั้น |
+| `ocr` (profile `ocr`) | `competitor-ocr` | `POST /extract` รับ PDF คืนข้อความทีละหน้า: ใช้ข้อความในไฟล์ก่อน OCR (Tesseract `tha+eng`) เฉพาะหน้าที่เป็นภาพหรือข้อความเพี้ยน | 8000 ภายในเท่านั้น |
 
 **image `competitor-app`:** `python:3.12-slim` + torch แบบ CPU + `requirements.txt` + โมเดล `intfloat/multilingual-e5-small`
-ดาวน์โหลดฝังไว้ตอน build (container ไม่ต้องโหลดโมเดลตอนเริ่ม และรันได้แม้ Hugging Face ล่ม) ดาวน์โหลดราว 1.2 GB · บนดิสก์ราว 4.3 GB
+ดาวน์โหลดฝังไว้ตอน build (container ไม่ต้องโหลดโมเดลตอนเริ่ม และรันได้แม้ Hugging Face ล่ม) ดาวน์โหลดราว 840 MB · บนดิสก์ราว 3.5 GB
 
 **config ผ่าน env (ไฟล์ `.env` บน ECS):**
 
@@ -88,7 +96,8 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 | `BASIC_AUTH_USER`, `BASIC_AUTH_HASH` | รหัสเข้าเว็บของ Caddy (`caddy hash-password`) · ไม่บังคับ: ว่าง = ทุกคนที่มีลิงก์เข้าได้ |
 
 ไฟล์จริงอยู่ที่ [`docker-compose.yml`](../docker-compose.yml) (`web` กับ `worker` ใช้ image เดียวกัน · ฐานข้อมูลตาม `DATABASE_URL` · ไฟล์ดิบ/อัปโหลด/log อยู่ใน volume `app_data`)
-บน ECS ตั้ง `APP_IMAGE=swr.ap-southeast-2.myhuaweicloud.com/<org>/competitor-app:<tag>` และ `OCR_IMAGE` ใน `.env` แล้ว `docker compose pull`
+ชุดสำหรับเซิร์ฟเวอร์คือ `deploy/docker-compose.yml` (ดึง image จาก Docker Hub ไม่ต้อง build) ฝังอยู่ใน image ที่ `/app/deploy`
+ถ้าย้าย image ไป SWR: ตั้ง `APP_IMAGE=swr.ap-southeast-2.myhuaweicloud.com/<org>/competitor-app:<tag>` และ `OCR_IMAGE` ใน `.env` แล้ว `docker compose pull`
 
 ## สิ่งที่ต้องแก้ในโค้ดก่อนขึ้นจริง
 
@@ -107,18 +116,8 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 
 ## ขั้นตอน deploy
 
-1. สร้าง VPC + subnet + Security Group 2 ชุด (ECS, RDS)
-2. สร้าง RDS for PostgreSQL ใน subnet ส่วนตัว → สร้าง user `app` / database `competitor` → `CREATE EXTENSION vector;` (คำสั่งอยู่ใน `DEPLOY.md`)
-3. สร้าง ECS + EIP (ดิสก์ EVS 40 GB) → ลง Docker + compose plugin → เปิด Cloud Eye agent · ตั้ง snapshot ของดิสก์เป็นประจำ
-4. บนเครื่องเรา: `docker build` 2 image (`competitor-app` จากโฟลเดอร์หลัก · `competitor-ocr` จาก `ocr/`) → `docker push` ไป SWR
-5. บน ECS: วาง `.env` (มี `OCR_URL=http://ocr:8000`), `docker-compose.yml`, `Caddyfile` → `docker compose --profile ocr up -d`
-   (ไม่ใช้ OCR: `docker compose up -d` และเว้น `OCR_URL` ว่าง)
-6. ย้ายข้อมูลจาก SQLite (ครั้งเดียว): `docker compose exec worker python migrate_to_postgres.py /app/data/import.db`
-7. ตั้ง DNS (หรือใช้ `<EIP>.sslip.io`) → เปิด `https://…` (ใส่รหัสถ้าตั้ง `BASIC_AUTH_HASH`) → กดวิเคราะห์ 1 รอบ และถาม 1 คำถาม
-
-**ยังไม่มี RDS:** ข้ามข้อ 2 และใช้ container `db` แทน (`--profile localdb` · `DATABASE_URL=postgresql://app:<รหัส>@db:5432/competitor`)
-หรือเว้น `DATABASE_URL` ว่างให้ใช้ SQLite แบบเดิม
-ข้อเสีย: ข้อมูลอยู่บนดิสก์ ECS เครื่องเดียว ต้องสำรองเอง (`pg_dump` ดู `DEPLOY.md`) และตั้ง snapshot ของดิสก์ EVS แทน backup ของ RDS
+อยู่ใน [`DEPLOY.md`](../DEPLOY.md) เล่มเดียว (สเปกทั้งหมด + ขั้นที่ 1–9: สร้าง resource ใน console → ลง Docker → ตั้ง RDS → ดึงไฟล์ตั้งค่าจาก image → `.env` → เปิดระบบ → ย้ายข้อมูล → ทดสอบ → ตั้งรหัสเข้าเว็บ)
+ครอบคลุมทั้งแบบ RDS และแบบ container `db` (ยังไม่มี RDS · ข้อมูลอยู่บนดิสก์ ECS ต้องสำรองเองด้วย `pg_dump` และ CBR backup ของดิสก์)
 
 ## ค่าใช้จ่ายโดยประมาณ
 
@@ -129,11 +128,11 @@ RDS ไม่มี IP สาธารณะ รับการเชื่อ�
 
 ## ต้องตรวจใน console ก่อนสร้าง
 
-ค้นเอกสารแล้วยังยืนยันไม่ได้:
+ค้นเอกสารแล้วยังยืนยันไม่ได้ (ข้อที่กระทบการ deploy อยู่ใน `DEPLOY.md` ขั้นที่ 1 ด้วย):
 
 - **RDS for PostgreSQL ใน AP-Bangkok เปิด `pgvector` ได้ไหม และรุ่นไหน** เอกสาร Huawei ที่พบระบุ PG 12–14 (หน้าอาจเก่า)
   ตรวจด้วย `SELECT name FROM pg_available_extensions WHERE name = 'vector';`
-  ถ้าไม่มี: แอปยังทำงานได้ (เก็บเวกเตอร์เป็น bytea คิดความใกล้ด้วย numpy) หรือใช้ container `db` (`pgvector/pgvector:pg16`, `--profile localdb`) แทน RDS
+  ถ้าไม่มี: แอปยังทำงานได้ (เก็บเวกเตอร์เป็น bytea คิดความใกล้ด้วย numpy) หรือใช้ container `db` (`pgvector/pgvector:pg16`, `COMPOSE_PROFILES=localdb,ocr`) แทน RDS
 - **SWR มีใน AP-Bangkok ไหม** ถ้าไม่มี ใช้ SWR region ใกล้สุด หรือ build image บน ECS ตรง ๆ
 - **General Text OCR ของ Huawei รองรับภาษาไทยไหม** ที่ยืนยันได้มีแค่บัตรประชาชนไทยและป้ายทะเบียนไทยใน AP-Bangkok
   ถ้าไม่รองรับ ใช้ container `ocr` (Tesseract) ตามแบบ

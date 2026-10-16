@@ -1,7 +1,7 @@
 # Competitor Compare — mock-up
 
 ขั้นตอนเต็มอยู่ใน [`docs/mockup-steps.md`](docs/mockup-steps.md) · ภาพรวมระบบอยู่ใน [`docs/architecture.md`](docs/architecture.md) (รายละเอียดรายระบบใน [`docs/systems/`](docs/systems/) · ไดอะแกรมแบบโต้ตอบใน [`docs/diagrams/`](docs/diagrams/)) · แผนขึ้น Huawei Cloud อยู่ใน [`docs/huawei-cloud.md`](docs/huawei-cloud.md)
-· ขึ้นเซิร์ฟเวอร์ด้วย Docker (คู่มือส่งต่อ) อยู่ใน [`DEPLOY.md`](DEPLOY.md)
+· **ขึ้น Huawei Cloud: ทำตาม [`DEPLOY.md`](DEPLOY.md) เล่มเดียว** (สร้าง resource ใน console → เปิดเว็บ · ไม่อยู่ใน image ส่งไฟล์นี้ให้คน deploy แยก)
 
 ## ติดตั้ง (Windows / PowerShell)
 
@@ -171,7 +171,7 @@ Phase 3 (`core/discover.py`) ใช้ LLM 3 ครั้งต่อการ�
    docker run --rm caddy:2 caddy hash-password --plaintext 'รหัสผ่าน'
    ```
    ใส่ผลในเครื่องหมาย `'...'` เช่น `BASIC_AUTH_HASH='$2a$14$...'` (เว้นว่าง = ไม่มีรหัส ทุกคนเข้าได้)
-2. รัน (ครั้งแรก build image นานหลายนาที มี torch และโมเดล e5 อยู่ในนั้น ใช้ดิสก์ราว 4.3 GB):
+2. รัน (ครั้งแรก build image นานหลายนาที มี torch และโมเดล e5 อยู่ในนั้น ใช้ดิสก์ราว 3.5 GB):
    ```powershell
    docker compose up -d --build                  # ไม่ใช้ OCR
    docker compose --profile ocr up -d --build    # ใช้ OCR: ใส่ OCR_URL=http://ocr:8000 ใน .env ด้วย

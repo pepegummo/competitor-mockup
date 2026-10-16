@@ -194,7 +194,7 @@ flowchart LR
 ## บน Huawei Cloud
 
 โค้ดและ docker พร้อมแล้ว (รันทั้งระบบด้วย `docker compose` ได้ ทดสอบในเครื่องแล้ว) · ที่ยังไม่ได้ทำคือสร้าง resource บน Huawei Cloud
-(VPC, ECS, RDS, ฯลฯ) · ขั้นตอนขึ้นระบบอยู่ใน [`DEPLOY.md`](../DEPLOY.md) แบบเต็ม (รายการ service, ค่าใช้จ่าย) อยู่ใน [`huawei-cloud.md`](huawei-cloud.md)
+(VPC, ECS, RDS, ฯลฯ) · ขั้นตอนขึ้นระบบทั้งหมด (console → เปิดเว็บ) อยู่ใน [`DEPLOY.md`](../DEPLOY.md) เล่มเดียว · แผนและเหตุผล (รายการ service, ค่าใช้จ่าย) อยู่ใน [`huawei-cloud.md`](huawei-cloud.md)
 
 | ส่วน | รันบนเครื่อง (dev) | บน cloud | สถานะ |
 |---|---|---|---|
