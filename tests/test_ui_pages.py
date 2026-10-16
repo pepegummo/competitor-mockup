@@ -65,7 +65,7 @@ def test_overview_shows_summary_first(demo_db):
 def test_start_disabled_until_two_competitors(demo_db):
     at = run("new")
     at.multiselect(key="comp_input").set_value(["MC"]).run()
-    start = next(b for b in at.button if b.label == "เริ่มวิเคราะห์")
+    start = next(b for b in at.button if b.label == "Start Analysis")
     assert start.disabled
     assert "คู่แข่ง 2–5 ราย" in " ".join(m.value for m in at.markdown)
 

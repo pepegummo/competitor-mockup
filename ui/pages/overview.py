@@ -30,14 +30,14 @@ def welcome():
         with col.container(border=True):
             st.markdown(f"**{title}**")
             st.caption(" · ".join(names))
-            if st.button("วิเคราะห์ชุดนี้", key=f"preset_{title}", icon=icon, disabled=busy, width="stretch"):
+            if st.button("Analyze this set", key=f"preset_{title}", icon=icon, disabled=busy, width="stretch"):
                 _start_preset(names)
                 st.rerun()
     c1, c2 = st.columns([1, 3], vertical_alignment="center")
-    if c1.button("ตั้งค่าเอง", type="primary", icon=":material/add_chart:", width="stretch"):
+    if c1.button("Set up yourself", type="primary", icon=":material/add_chart:", width="stretch"):
         nav.go("new")
     c2.caption("เลือกบริษัทเอง เทียบกับบริษัทของเรา หรือให้ระบบหาคู่แข่งให้")
-    nav.link("guide", "ไม่แน่ใจเริ่มตรงไหน? ดูวิธีใช้ 4 ขั้น")
+    nav.link("guide", "Not sure where to start? See How to Use")
 
 
 def render():

@@ -19,7 +19,7 @@ def _merge_section():
         c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
         keep = c1.radio(f"{symbol}: เก็บชื่อไหน", list(docs), format_func=lambda n: f"{n} ({docs[n]} รายการ)",
                         horizontal=True, key=f"dup_{symbol}")
-        if c2.button("รวม", key=f"merge_{symbol}", width="stretch"):
+        if c2.button("Merge", key=f"merge_{symbol}", width="stretch"):
             st.session_state.confirm_merge = symbol
         if st.session_state.get("confirm_merge") == symbol:
             others = [n for n in docs if n != keep]
@@ -47,7 +47,7 @@ def _recheck_section(names):
     calls = math.ceil(todo / process.BATCH_SIZE)
     st.caption(f"{', '.join(names)}: ข่าว {total} รายการ จะถูกจัดหมวดและตรวจใหม่ {todo} รายการ "
                f"(ใช้ LLM ประมาณ {calls} ครั้ง) ข่าวที่ตรวจด้วยมือแล้วไม่ถูกแตะ")
-    if st.button("จัดหมวดข่าวเก่าใหม่", icon=":material/refresh:", key="recheck", disabled=not todo):
+    if st.button("Re-classify old news", icon=":material/refresh:", key="recheck", disabled=not todo):
         with friendly_errors(), st.status("กำลังจัดหมวดใหม่...") as status:
             db.reset_news_facts(ids)
             saved, skipped, dropped = process.classify_pending(ids, on_progress=lambda m: status.update(label=m))

@@ -335,6 +335,6 @@ def job_progress():
     with st.status(f"{label} · {seconds} วินาที", expanded=True, state="running"):
         _render_log(lines)
         st.caption("รันเบื้องหลัง ไปหน้าอื่นระหว่างรอได้ เสร็จแล้วระบบเปิดผลให้เอง")
-        if seconds > 900 and st.button("เลิกรอ", key="job_cancel"):
+        if seconds > 900 and st.button("Stop waiting", key="job_cancel"):
             st.session_state.pop("job_id", None)
             st.rerun(scope="app")

@@ -62,7 +62,7 @@ def save_form(res):
     with st.form("watch_save", border=False):
         c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
         name = c1.text_input("ชื่อชุด", value=" vs ".join(top)[:80])
-        if c2.form_submit_button("บันทึกชุดนี้", icon=":material/bookmark_add:", width="stretch"):
+        if c2.form_submit_button("Save this watchlist", icon=":material/bookmark_add:", width="stretch"):
             config = dict(companies=res["companies"], self_name=res["self_name"], mode=res["mode"],
                           focus=res["focus"], groups=res.get("groups", {}), opts=res.get("opts"))
             db.save_watchlist(name.strip() or " vs ".join(top), config)
@@ -82,14 +82,14 @@ def _watch_list(on_open):
             c1.markdown(f"**{w['name']}**" + (f"  :red-badge[สำคัญ {high} เรื่อง]" if high else ""))
             c1.caption(", ".join(w["config"]["companies"]) + " · "
                        + (f"รันล่าสุด {fmt_time(last['started_at'])}" if last else "ยังไม่เคยรัน"))
-            if c2.button("เปิดผลล่าสุด", key=f"w_open_{w['id']}", disabled=not last, width="stretch"):
+            if c2.button("Open latest result", key=f"w_open_{w['id']}", disabled=not last, width="stretch"):
                 on_open(last["id"])
                 opened = True
-            if c3.button("รันตอนนี้", key=f"w_run_{w['id']}", width="stretch",
+            if c3.button("Run now", key=f"w_run_{w['id']}", width="stretch",
                          help="รันเบื้องหลัง ใช้เวลาหลายนาที เสร็จแล้วกด “เปิดผลล่าสุด”"):
                 run_watch_now(w["id"])
                 st.toast(f"เริ่มรัน {w['name']} เบื้องหลังแล้ว")
-            if c4.button("ลบ", key=f"w_del_{w['id']}", icon=":material/delete:", help="ลบชุดนี้"):
+            if c4.button("Delete", key=f"w_del_{w['id']}", icon=":material/delete:", help="ลบชุดนี้"):
                 db.delete_watchlist(w["id"])
                 st.rerun()
     return opened
@@ -109,12 +109,12 @@ def _schedule():
     exists, info = _schtasks("/Query", "/TN", TASK, "/FO", "LIST")
     c1, c2, c3 = st.columns([1.2, 1.6, 1.6], vertical_alignment="bottom")
     at = c1.time_input("เวลา", value=time(8, 0), step=1800)
-    if c2.button("ตั้งเวลา" if not exists else "เปลี่ยนเวลา", icon=":material/schedule:", width="stretch"):
+    if c2.button("Set schedule" if not exists else "Change schedule", icon=":material/schedule:", width="stretch"):
         ok, msg = _schtasks("/Create", "/F", "/SC", "DAILY", "/TN", TASK, "/ST", at.strftime("%H:%M"),
                             "/TR", f'"{_python()}" "{SCRIPT}"')
         st.toast("ตั้งเวลาแล้ว" if ok else f"ตั้งเวลาไม่สำเร็จ: {msg}")
         st.rerun()
-    if c3.button("ยกเลิกการตั้งเวลา", icon=":material/alarm_off:", disabled=not exists, width="stretch"):
+    if c3.button("Remove schedule", icon=":material/alarm_off:", disabled=not exists, width="stretch"):
         ok, msg = _schtasks("/Delete", "/F", "/TN", TASK)
         st.toast("ยกเลิกแล้ว" if ok else f"ยกเลิกไม่สำเร็จ: {msg}")
         st.rerun()
@@ -132,7 +132,7 @@ def _alerts():
         c1, c2 = st.columns([3, 1], vertical_alignment="center")
         c1.caption("ส่งแจ้งเตือนเมื่อมีเรื่องสำคัญ (แจ้งตลาดใหม่ งบใหม่ ข่าวลบใหม่ ข่าวลบ/ดาวรีวิวเปลี่ยนแรง) "
                    "ไปที่ webhook ใน .env")
-        if c2.button("ทดสอบส่ง", icon=":material/send:", width="stretch"):
+        if c2.button("Send test", icon=":material/send:", width="stretch"):
             ok, msg = monitor.send_alert("📊 Competitor Compare: ทดสอบการแจ้งเตือน")
             st.toast(msg)
     else:
@@ -143,7 +143,7 @@ def _alerts():
 
 def _log():
     if LOG.exists():
-        with st.popover("บันทึกการรันอัตโนมัติ", icon=":material/receipt_long:"):
+        with st.popover("Auto-run log", icon=":material/receipt_long:"):
             lines = LOG.read_text(encoding="utf-8", errors="replace").splitlines()
             st.code("\n".join(lines[-60:]) or "-", language=None)
 

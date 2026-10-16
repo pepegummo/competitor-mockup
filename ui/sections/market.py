@@ -20,7 +20,7 @@ def section_sector(v):
     symbols = list(dict.fromkeys(companies.values()))
     fr = benchmark.frames(symbols)
     missing = [s for s in symbols if s not in fr]
-    if missing and st.button(f"ดึงตัวเลขทุกบริษัทในหมวดของ {', '.join(missing)} จาก SET",
+    if missing and st.button(f"Fetch sector figures for {', '.join(missing)} from SET",
                              icon=":material/download:", key="bench_fetch",
                              help="ไม่ใช้ LLM · ประมาณ 1 วินาทีต่อ 4 บริษัท · เก็บไว้ใช้ซ้ำ 1 วัน"):
         with friendly_errors(), st.spinner("กำลังดึงตัวเลขทุกบริษัทในหมวด..."):
@@ -65,7 +65,7 @@ def section_price(v):
     companies = benchmark.symbols_of(v["companies"])
     px = impact.prices(set(companies.values()))
     missing = sorted(set(companies.values()) - set(px))
-    if missing and st.button(f"ดึงราคาหุ้น 6 เดือนของ {', '.join(missing)} จาก SET", icon=":material/download:",
+    if missing and st.button(f"Fetch 6-month prices for {', '.join(missing)} from SET", icon=":material/download:",
                              key="px_fetch", help="ไม่ใช้ LLM · 1 call ต่อหุ้น"):
         with friendly_errors(), st.spinner("กำลังดึงราคาหุ้น..."):
             impact.refresh(missing, log=st.caption)

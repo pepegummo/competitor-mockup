@@ -69,7 +69,7 @@ def peer_button(base, key="comp_input", limit=5):
     if not symbol:
         return
     full = len(st.session_state.get(key) or []) >= limit
-    st.button(f"เพิ่มบริษัทในหมวดเดียวกับ {base}", icon=":material/group_add:", key="peer_btn",
+    st.button(f"Add peers of {base}", icon=":material/group_add:", key="peer_btn",
               on_click=_add_peers, args=(symbol, key, limit), disabled=full, width="stretch",
               help="เลือกบริษัทจดทะเบียนที่ใหญ่สุดตามมูลค่าตลาดในหมวดธุรกิจ SET เดียวกัน "
                    "(ครั้งแรกดึงตัวเลขทั้งหมวดราว 10–30 วินาที ไม่ใช้ LLM)")
