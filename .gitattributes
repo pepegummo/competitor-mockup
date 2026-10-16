@@ -1,0 +1,14 @@
+# ไฟล์ที่เข้า image / ใช้บนเซิร์ฟเวอร์ Linux ต้องเป็น LF เสมอ (core.autocrlf บน Windows แปลงเป็น CRLF ตอน checkout
+# แล้ว .env ที่ cp จาก .env.example จะมี \r ต่อท้ายทุกค่า)
+* text=auto
+*.py text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+.env.example text eol=lf
+Caddyfile* text eol=lf
+*.bat text eol=crlf
