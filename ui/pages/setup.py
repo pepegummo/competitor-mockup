@@ -12,7 +12,7 @@ from ui.labels import CATEGORY_TH, MODES
 def _step_who():
     """คืน (โหมด, บริษัทเรา, คู่แข่ง)"""
     with st.container(border=True):
-        st.markdown("##### ① เทียบใครบ้าง")
+        st.markdown("##### ① เทียบใครบ้าง (ต้องทำ)")
         keys = list(MODES)
         mode = st.segmented_control("รูปแบบ", keys, format_func=lambda k: MODES[k][0], key="mode_input",
                                     label_visibility="collapsed") or "compare"
@@ -50,7 +50,7 @@ def _step_who():
 def _step_focus():
     cats, kw = st.session_state.focus_cats or [], st.session_state.focus_kw.strip()
     chosen = [CATEGORY_TH[c] for c in cats] + ([kw] if kw else [])
-    with st.expander("② สนใจเรื่องอะไร · " + (", ".join(chosen) if chosen else "ทุกเรื่อง"),
+    with st.expander("② สนใจเรื่องอะไร (ไม่บังคับ) · " + (", ".join(chosen) if chosen else "ทุกเรื่อง"),
                      icon=":material/filter_center_focus:"):
         st.pills("หมวด", state.FOCUS_CATEGORIES, format_func=CATEGORY_TH.get, selection_mode="multi",
                  key="focus_cats", help="เลือกแล้วจะค้นข่าวหมวดนั้นเพิ่ม และวิเคราะห์เฉพาะหมวดที่เลือก")
@@ -63,7 +63,7 @@ def _step_focus():
 def _step_sources(mode):
     picked = st.session_state.src_pick or []
     label = "ทุกแหล่ง" if len(picked) == len(ALL_SOURCES) else f"{len(picked)} จาก {len(ALL_SOURCES)} แหล่ง"
-    with st.expander(f"③ ข้อมูลจากไหน · {label}", icon=":material/database:"):
+    with st.expander(f"③ ข้อมูลจากไหน (ไม่บังคับ) · {label}", icon=":material/database:"):
         st.pills("แหล่งข้อมูล", list(ALL_SOURCES), format_func=ALL_SOURCES.get, selection_mode="multi",
                  key="src_pick")
         st.checkbox("ดึงเนื้อหาเต็มของข่าว", key="src_fulltext",
@@ -179,7 +179,8 @@ def _start(mode, self_name, competitors):
 def render():
     state.restore_form()
     st.title("วิเคราะห์ใหม่")
-    st.caption("ใส่แค่ขั้น ① ก็เริ่มได้ ขั้น ② และ ③ ไม่บังคับ")
+    st.caption("3 ขั้น: ① เลือกบริษัท (ต้องทำ) → ② เลือกเรื่องที่สนใจ (ไม่บังคับ) → ③ เลือกแหล่งข้อมูล (ไม่บังคับ) "
+               "แล้วกด “เริ่มวิเคราะห์” ด้านล่าง · ดูรายละเอียดที่หน้า “วิธีใช้”")
     mode, self_name, competitors = _step_who()
     _step_focus()
     _step_sources(mode)

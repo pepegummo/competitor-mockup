@@ -397,22 +397,24 @@ def header(res):
 
 def show(res, on_report):
     title, fresh = header(res)
-    head, b1, b2, b3, b4, b5 = st.columns([4.6, 1.25, 1.2, 1.3, 1.45, 1.1], vertical_alignment="center")
+    head, b_new, b_dl = st.columns([5, 1.4, 1.4], vertical_alignment="center")
     head.markdown(f"## {title}")
-    with b1:
+    if b_new.button("วิเคราะห์ใหม่", icon=":material/add_chart:", type="primary", width="stretch"):
+        nav.go("new")
+    tools = st.columns([1.2, 1.2, 1.2, 4.4])  # เครื่องมือรอง: ตัวกรอง ติดตาม คำศัพท์
+    with tools[0]:
         f = filter_bar(res)
     scope = describe(f)
     active = bool(scope)
     v = build_view(res, f)
-    with b2:
-        follow(res)
-    with b3:
+    with b_dl:
         downloads(res, v, title)
-    if b4.button("วิเคราะห์ใหม่", icon=":material/add_chart:", width="stretch"):
-        nav.go("new")
-    with b5:
+    with tools[1]:
+        follow(res)
+    with tools[2]:
         glossary()
-    st.caption(" · ".join(fresh))
+    with st.expander("ที่มาและความสดของข้อมูล", icon=":material/schedule:"):
+        st.caption(" · ".join(fresh))
     if res.get("focus_label"):
         st.caption(f"วิเคราะห์เฉพาะเรื่อง: **{res['focus_label']}**")
 

@@ -18,14 +18,14 @@ def _page(target):
     import streamlit as st
 
     from ui import nav, state as s
-    from ui.pages import accuracy, ask, companies, internal, overview, setup, watch
+    from ui.pages import accuracy, ask, companies, guide, internal, overview, setup, watch
 
     if "result" not in st.session_state:
         st.session_state.result = s.restore_last_result()
     st.navigation(nav.build(), position="hidden")
     target = st.session_state.get("_target", target)  # เทสเปลี่ยนหน้าได้ระหว่างรอบ
     {"overview": overview, "new": setup, "ask": ask, "watch": watch, "internal": internal,
-     "companies": companies, "accuracy": accuracy}[target].render()
+     "companies": companies, "accuracy": accuracy, "guide": guide}[target].render()
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def run(target):
     return at.run()
 
 
-@pytest.mark.parametrize("target", ["overview", "new", "ask", "watch", "internal", "companies", "accuracy"])
+@pytest.mark.parametrize("target", ["overview", "new", "ask", "watch", "internal", "companies", "accuracy", "guide"])
 def test_every_page_opens(demo_db, target):
     at = run(target)
     assert not at.exception, at.exception
