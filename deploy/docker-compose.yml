@@ -1,8 +1,8 @@
-# ชุดสำหรับขึ้นเซิร์ฟเวอร์จาก image บน Docker Hub (ไม่ต้องมีโค้ด) · ฝังอยู่ใน image ที่ /app/deploy
-# ดึงออกมาด้วยคำสั่งใน DEPLOY.md แล้ว: cp .env.example .env → แก้ .env → docker compose up -d
-# ฐานข้อมูล (DATABASE_URL ใน .env): RDS ใส่ URL ของ RDS · container db ใช้ docker compose --profile localdb up -d
+# ชุดสำหรับขึ้นเซิร์ฟเวอร์จาก image บน Docker Hub (ไม่ต้องมีโค้ด) · ฝังอยู่ใน image ที่ /app/deploy (คู่มือ DEPLOY.md ส่งแยก)
+# ขั้นตอนเต็มอยู่ใน DEPLOY.md: cp .env.example .env → แก้ .env (รวม COMPOSE_PROFILES) → docker compose up -d
+# ฐานข้อมูล (DATABASE_URL ใน .env): RDS ใส่ URL ของ RDS · container db ใส่ localdb ใน COMPOSE_PROFILES
 #   · เว้นว่าง = SQLite ใน volume app_data (แบบเดิม)
-# เปิด OCR: เพิ่ม --profile ocr และใส่ OCR_URL=http://ocr:8000 ใน .env
+# เปิด OCR: ใส่ ocr ใน COMPOSE_PROFILES และ OCR_URL=http://ocr:8000 ใน .env
 # (ไฟล์ docker-compose.yml ที่โฟลเดอร์หลักของโค้ดเป็นแบบ build เอง ใช้ตอนพัฒนา)
 x-logging: &logging  # log ของ docker ไม่เกิน 30 MB ต่อ container ไม่ให้ดิสก์เต็ม
   driver: json-file

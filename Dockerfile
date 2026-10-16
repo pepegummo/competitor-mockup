@@ -22,19 +22,23 @@ RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+RUN useradd --create-home --uid 1000 app \
+ && mkdir -p /app/data /opt/hf \
+ && chown app:app /app/data /opt/hf
+
 # ฝังโมเดล embedding ไว้ใน image: container ไม่ต้องโหลดตอนเริ่ม และใช้ได้แม้ Hugging Face ล่ม
+# โหลดในฐานะ user app เลย: ถ้าโหลดเป็น root แล้วค่อย chown ทีหลัง docker จะก๊อปโมเดลทั้งก้อน (~500 MB) เป็น layer ใหม่
 ARG EMBED_MODEL=intfloat/multilingual-e5-small
+USER app
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBED_MODEL}')"
+USER root
 
 COPY . .
-# ชุดไฟล์สำหรับขึ้นเซิร์ฟเวอร์ (compose, Caddyfile, .env.example, DEPLOY.md) ให้ดึงออกจาก image ได้โดยไม่ต้องมีโค้ด
-# compose ชี้ไป image รุ่นเดียวกับที่ build: docker build --build-arg VERSION=0.2 -t quix07/competitor-app:0.2 .
+# ชุดไฟล์ตั้งค่าสำหรับขึ้นเซิร์ฟเวอร์ (compose, Caddyfile, .env.example) ให้ดึงออกจาก image ได้โดยไม่ต้องมีโค้ด · คู่มือ DEPLOY.md ไม่อยู่ใน image (ส่งแยก)
+# compose ชี้ไป image รุ่นเดียวกับที่ build: docker build --build-arg VERSION=0.3 -t quix07/competitor-app:0.3 .
 ARG VERSION=latest
 RUN sed -i "s/__VERSION__/${VERSION}/g" deploy/docker-compose.yml \
- && cp .env.example DEPLOY.md deploy/
-RUN useradd --create-home --uid 1000 app \
- && mkdir -p /app/data \
- && chown -R app:app /app/data /opt/hf
+ && cp .env.example deploy/
 USER app
 
 EXPOSE 8501

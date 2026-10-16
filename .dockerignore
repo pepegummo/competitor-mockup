@@ -16,12 +16,14 @@ demo/monitor.log
 .vscode/
 .idea/
 
-# service แยก (build จาก ocr/) · เอกสาร/เทส ไม่ต้องใช้ตอนรัน
+# service แยก (build จาก ocr/) · เอกสาร (docs/, DEPLOY.md, README.md) และเทส ไม่ต้องใช้ตอนรัน · DEPLOY.md ส่งให้คน deploy แยกต่างหาก
 # แต่ core/ocr.py ใช้ ocr/extract.py อ่าน PDF ในแอปเอง (เมื่อไม่ได้ตั้ง OCR_URL) จึงต้องมีใน image
 ocr/
 !ocr/__init__.py
 !ocr/extract.py
 docs/
+DEPLOY.md
+README.md
 tests/
 requirements-dev.txt
 run_demo.bat
