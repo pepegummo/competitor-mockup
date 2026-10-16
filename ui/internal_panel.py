@@ -118,8 +118,11 @@ def _pdf_upload(up, self_name):
             st.error(str(e))
             return
     if not res["parts"]:
-        st.warning("ไม่พบข้อความที่อ่านได้" + (" หน้าเหล่านี้เป็นภาพ และเครื่องนี้ยังไม่มี OCR (ตั้ง OCR_URL หรือลง Tesseract)"
+        st.warning("ไม่พบข้อความที่อ่านได้" + (" หน้าเหล่านี้เป็นภาพสแกน และระบบยังไม่เปิดใช้การอ่านภาพ (OCR) ติดต่อผู้ดูแลระบบ"
                                                if not res["ocr"] else ""), icon=":material/warning:")
+        if not res["ocr"]:
+            with st.expander("For administrators", icon=":material/admin_panel_settings:"):
+                st.caption("ตั้ง `OCR_URL` ในไฟล์ `.env` หรือติดตั้ง Tesseract บนเครื่อง")
         return
     if not res["added"]:
         st.info("เอกสารช่วงนี้บันทึกไว้แล้ว")

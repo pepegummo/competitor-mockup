@@ -3,7 +3,6 @@ import os
 
 import streamlit as st
 
-from core import db
 from ui import nav, results, state
 from ui.common import friendly_errors
 from ui.labels import PRESETS
@@ -42,7 +41,7 @@ def welcome():
 
 def render():
     if os.environ.get("CC_DEMO"):
-        st.caption(f":material/slideshow: โหมดเดโม · ใช้ข้อมูลตัวอย่างใน `{db.DATA_DIR.name}/` เปิดดูได้โดยไม่ต้องใช้เน็ต "
+        st.caption(f":material/slideshow: โหมดเดโม · ใช้ข้อมูลตัวอย่าง เปิดดูได้โดยไม่ต้องใช้เน็ต "
                    "· คำถามใหม่และการวิเคราะห์ใหม่ยังต้องใช้เน็ต")
     if state.job_running():
         state.job_progress()

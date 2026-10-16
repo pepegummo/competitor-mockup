@@ -26,7 +26,12 @@ def friendly_errors():
     try:
         yield
     except RuntimeError as e:
-        st.error(f"{e} เปิดไฟล์ `.env` ใส่ `LLM_API_KEY=...` แล้วรีสตาร์ทแอป")
+        if "LLM_API_KEY" in str(e):
+            st.error("ระบบยังไม่ได้ตั้งค่าการเชื่อมต่อ LLM ติดต่อผู้ดูแลระบบ")
+            with st.expander("For administrators", icon=":material/admin_panel_settings:"):
+                st.caption("เปิดไฟล์ `.env` ใส่ `LLM_API_KEY=...` แล้วรีสตาร์ทแอป")
+        else:
+            st.error(str(e))
     except requests.RequestException as e:
         st.error(f"เชื่อมต่อ LLM ไม่ได้ ({type(e).__name__}) ข่าวที่จัดหมวดแล้วถูกบันทึกไว้ "
                  "กดอีกครั้งจะทำต่อจากเดิม")
