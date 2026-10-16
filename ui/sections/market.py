@@ -88,7 +88,7 @@ def section_price(v):
     pick = st.segmented_control("บริษัท", names, key="px_pick", default=names[0],
                                 label_visibility="collapsed") or names[0]
     st.altair_chart(charts.price_news_chart(px[companies[pick]], ev[ev["company"] == pick]), width="stretch")
-    st.markdown("##### วันที่หุ้นขยับมากที่สุดหลังข่าว")
+    st.markdown("##### Biggest Stock Moves After News")
     table = ev.head(15).assign(หัวข้อ=ev["titles"].map(lambda t: " / ".join(t[:2])),
                                ลิงก์=ev["urls"].map(lambda u: u[0] if u else None),
                                น้ำเสียง=ev["sentiment"].map(SENTIMENT_TH))

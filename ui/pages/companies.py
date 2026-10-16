@@ -5,7 +5,7 @@ from ui import company_panel, group_panel, maintenance_panel, nav, state
 
 
 def render():
-    st.title("บริษัทและแหล่งข้อมูล")
+    st.title("Companies & Sources")
     names, self_name = state.upcoming()
     f = state.form()
     if not names:
@@ -20,5 +20,5 @@ def render():
             group_panel.register(names)
             members = group_panel.picked(names)
         company_panel.render(names + list(members), self_name, f["src_pick"] or [], True, members)
-    st.subheader("ดูแลข้อมูล", divider="gray")
+    st.subheader("Maintenance", divider="gray")
     maintenance_panel.render(names)

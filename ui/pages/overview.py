@@ -23,7 +23,7 @@ def welcome():
     st.title("Competitor Compare")
     st.markdown("ดูว่าคู่แข่งทำอะไรอยู่ จากข่าว ประกาศตลาดหลักทรัพย์ รีวิวแอป และงบการเงิน "
                 "สรุปเป็นรายงานพร้อมลิงก์ที่มาทุกข้อ")
-    st.markdown("##### เริ่มเร็วด้วยชุดตัวอย่าง")
+    st.markdown("##### Quick Start with Presets")
     st.caption("กดปุ่มเดียวเริ่มวิเคราะห์ได้เลย ระบบดึงข้อมูลเบื้องหลังประมาณ 1–3 นาที แล้วเปิดผลให้เอง")
     busy = state.job_running()
     for col, (title, icon, names) in zip(st.columns(len(PRESETS)), PRESETS):

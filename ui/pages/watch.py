@@ -5,6 +5,6 @@ from ui import nav, state, watch_panel
 
 
 def render():
-    st.title("ติดตามอัตโนมัติ")
+    st.title("Auto Monitoring")
     if watch_panel.render(st.session_state.result, state.open_run):
         nav.go("overview")

@@ -13,15 +13,15 @@ def build():
         return PAGES[key]
 
     return {
-        "ใช้งาน": [page("overview", overview.render, "ภาพรวม", ":material/insights:", default=True),
-                   page("new", setup.render, "วิเคราะห์ใหม่", ":material/add_chart:"),
-                   page("ask", ask.render, "ถามข้อมูล", ":material/forum:"),
-                   page("watch", watch.render, "ติดตามอัตโนมัติ", ":material/notifications_active:")],
-        "ตั้งค่า": [
-            page("internal", internal.render, "ข้อมูลภายใน", ":material/upload_file:"),
-            page("companies", companies.render, "บริษัทและแหล่งข้อมูล", ":material/tune:"),
-            page("accuracy", accuracy.render, "ตรวจความแม่น", ":material/fact_check:")],
-        "ช่วยเหลือ": [page("guide", guide.render, "วิธีใช้", ":material/help:")],
+        "Workspace": [page("overview", overview.render, "Overview", ":material/insights:", default=True),
+                   page("new", setup.render, "New Analysis", ":material/add_chart:"),
+                   page("ask", ask.render, "Ask Data", ":material/forum:"),
+                   page("watch", watch.render, "Auto Monitoring", ":material/notifications_active:")],
+        "Settings": [
+            page("internal", internal.render, "Internal Data", ":material/upload_file:"),
+            page("companies", companies.render, "Companies & Sources", ":material/tune:"),
+            page("accuracy", accuracy.render, "Accuracy Check", ":material/fact_check:")],
+        "Help": [page("guide", guide.render, "How to Use", ":material/help:")],
     }
 
 

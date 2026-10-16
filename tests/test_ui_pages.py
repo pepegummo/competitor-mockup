@@ -57,9 +57,9 @@ def test_every_page_opens(demo_db, target):
 def test_overview_shows_summary_first(demo_db):
     at = run("overview")
     text = " ".join(m.value for m in at.markdown)
-    assert "สิ่งที่ควรรู้" in text
-    assert [t.label for t in at.tabs][:1] == ["สรุป"]
-    assert "ถามข้อมูล" not in [t.label for t in at.tabs]  # ย้ายไปเป็นหน้าแยก
+    assert "Key Takeaways" in text
+    assert [t.label for t in at.tabs][:1] == ["Summary"]
+    assert "Ask Data" not in [t.label for t in at.tabs]  # ย้ายไปเป็นหน้าแยก
 
 
 def test_start_disabled_until_two_competitors(demo_db):

@@ -317,7 +317,7 @@ def job_watch():
     lines = _job_lines(job)
     st.session_state.job_notes = [t for k, t in lines if k == "warn"]
     if job["status"] == "done" and job["run_id"] and open_run(job["run_id"]):
-        st.session_state.toast = "วิเคราะห์เสร็จแล้ว เปิดผลในหน้าภาพรวม"
+        st.session_state.toast = "วิเคราะห์เสร็จแล้ว เปิดผลในหน้า Overview"
     else:
         st.session_state.job_notes.append(job["error"] or "วิเคราะห์ไม่สำเร็จ")
     st.rerun(scope="app")

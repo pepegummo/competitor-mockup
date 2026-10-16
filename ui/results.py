@@ -174,7 +174,7 @@ def changes_box(res):
     high = [c for c in changes if c["level"] == "high"]
     info = [c for c in changes if c["level"] != "high"]
     with st.container(border=True):
-        st.markdown("##### อะไรเปลี่ยนไปตั้งแต่รอบก่อน" + (f"  :red-badge[สำคัญ {len(high)}]" if high else ""))
+        st.markdown("##### What Changed Since Last Run" + (f"  :red-badge[สำคัญ {len(high)}]" if high else ""))
         st.caption(f"รอบนี้เสร็จเมื่อ {fmt_time(res.get('run_at'))} · เทียบกับรอบล่าสุดก่อนหน้าของแต่ละบริษัท")
         if high:
             st.markdown("\n".join(line(c) for c in high))
@@ -194,7 +194,7 @@ def glossary():
 def tab_summary(res, v, f, active, scope, on_report):
     left, right = st.columns([3, 2], gap="large")
     with left:
-        title = f"ข้อเสนอแนะสำหรับ {res['self_name']}" if res["self_name"] else "รายงานสรุป"
+        title = f"Recommendations for {res['self_name']}" if res["self_name"] else "Summary Report"
         st.markdown(f"##### {title}")
         report_scope = res.get("report_scope")
         st.caption(f"เขียนโดย LLM เมื่อ {fmt_time(res['report_at'])} จากตัวเลขในหน้านี้เท่านั้น · "
@@ -209,7 +209,7 @@ def tab_summary(res, v, f, active, scope, on_report):
         st.markdown(res["report"])
         nav.link("ask", "ถามเพิ่มเกี่ยวกับผลนี้", icon=":material/forum:")
     with right:
-        st.markdown("##### น้ำเสียงข่าว")
+        st.markdown("##### News Sentiment")
         if v["b"].empty:
             st.caption("ไม่มีข่าวตามตัวกรองนี้")
             return
@@ -246,7 +246,7 @@ def key_points(res, v):
     if not points:
         return
     with st.container(border=True):
-        st.markdown("##### สิ่งที่ควรรู้")
+        st.markdown("##### Key Takeaways")
         st.markdown("\n".join(f"- {p}" for p in points[:5]))
         st.caption("คิดจากข้อมูลโดยระบบ ไม่ใช่ LLM · รายละเอียดอยู่ในแท็บด้านล่าง")
 
@@ -289,11 +289,11 @@ def tab_gap(v):
         insights.show(st, behind or ["ยังไม่พบจุดที่ตามชัดเจน"])
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("##### หมวดข่าว: เราเน้นต่างจากคู่แข่งตรงไหน")
+        st.markdown("##### Topic Gap")
         st.altair_chart(charts.gap_chart(gap, "category", self_name), width="stretch")
         st.caption("หมวดคิดเป็น % ของข่าวแต่ละบริษัท มาก/น้อยกว่าไม่ได้แปลว่าดีหรือแย่")
     with right:
-        st.markdown("##### น้ำเสียงข่าว: เราดีหรือแย่กว่า")
+        st.markdown("##### Sentiment Gap")
         st.altair_chart(charts.gap_chart(gap, "sentiment", self_name), width="stretch")
     with st.expander("ตารางส่วนต่างทั้งหมด"):
         table = gap.copy()
@@ -433,7 +433,7 @@ def show(res, on_report):
     highlights(res, v)
     kpi_cards(v)
     has_gap = bool(v["self_name"]) and not v["gap"].empty
-    names = ["สรุป"] + (["เรา vs คู่แข่ง"] if has_gap else []) + ["เจาะลึก", "ข้อมูลทั้งหมด"]
+    names = ["Summary"] + (["Us vs Competitors"] if has_gap else []) + ["Deep Dive", "All Data"]
     renders = ([lambda: tab_summary(res, v, f, active, scope, on_report)]
                + ([lambda: tab_gap(v)] if has_gap else [])
                + [lambda: tab_deep(res, v), lambda: tab_data(v)])

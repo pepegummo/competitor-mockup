@@ -157,11 +157,11 @@ def render(res, on_open):
             st.markdown("**บันทึกผลที่เปิดอยู่เป็นชุดติดตาม**")
             save_form(res)
     count = len(db.watchlists())
-    st.subheader(f"ชุดที่ติดตาม ({count})" if count else "ชุดที่ติดตาม", divider="gray")
+    st.subheader(f"Watchlists ({count})" if count else "Watchlists", divider="gray")
     if not count:
         st.caption("ยังไม่มีชุดติดตาม วิเคราะห์ก่อน แล้วกด “ติดตามชุดนี้” ในหน้าภาพรวม หรือบันทึกด้านบน")
     opened = _watch_list(on_open)
-    st.subheader("ตั้งเวลาและแจ้งเตือน", divider="gray")
+    st.subheader("Schedule & Alerts", divider="gray")
     _schedule()
     _alerts()
     _log()

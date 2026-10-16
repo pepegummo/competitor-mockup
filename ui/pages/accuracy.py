@@ -5,5 +5,5 @@ from ui import accuracy_panel
 
 
 def render():
-    st.title("ตรวจความแม่น")
+    st.title("Accuracy Check")
     accuracy_panel.render()
