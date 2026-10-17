@@ -1,7 +1,7 @@
 # คู่มือขึ้นระบบบน Huawei Cloud
 
 คู่มือเล่มเดียวตั้งแต่สร้างเครื่องใน console จนเปิดเว็บได้ ทำตามลำดับขั้นที่ 1–9 ได้เลย
-ไม่ต้อง clone โค้ด ไม่ต้องลง Python ใช้แค่ Docker · image อยู่บน Docker Hub (`quix07/competitor-app`, `quix07/competitor-ocr`) รุ่นปัจจุบัน **0.4**
+ไม่ต้อง clone โค้ด ไม่ต้องลง Python ใช้แค่ Docker · image อยู่บน Docker Hub (`quix07/competitor-app`, `quix07/competitor-ocr`) รุ่นปัจจุบัน **0.5**
 
 ## ภาพรวม
 
@@ -60,8 +60,8 @@ ECS ──ผ่าน EIP──▶ ภายนอก: LLM ของอาจ�
 | รายการ | รุ่น | ขนาด (ดาวน์โหลด / บนดิสก์) |
 |---|---|---|
 | Docker Engine + **Compose plugin** | Compose **2.20 ขึ้นไป** (ติดตั้งด้วย `get.docker.com` ได้รุ่นล่าสุดอยู่แล้ว) | – |
-| `quix07/competitor-app` (web + worker) | `0.4` · Python 3.12 · torch CPU · โมเดล `intfloat/multilingual-e5-small` ฝังใน image | ~840 MB / 3.5 GB |
-| `quix07/competitor-ocr` | `0.4` · FastAPI + Tesseract `tha+eng` | ~124 MB / 490 MB |
+| `quix07/competitor-app` (web + worker) | `0.5` · Python 3.12 · torch CPU · โมเดล `intfloat/multilingual-e5-small` ฝังใน image | ~840 MB / 3.5 GB |
+| `quix07/competitor-ocr` | `0.5` · FastAPI + Tesseract `tha+eng` | ~124 MB / 490 MB |
 | `caddy` (proxy) | `2` · HTTPS อัตโนมัติจาก Let's Encrypt | ~24 MB / 93 MB |
 | `pgvector/pgvector` (เฉพาะแบบ container `db`) | `pg16` | ~150 MB / 620 MB |
 
@@ -144,7 +144,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 ```bash
 mkdir competitor && cd competitor
-docker run --rm quix07/competitor-app:0.4 tar -C /app/deploy -cf - . | tar -xf -
+docker run --rm quix07/competitor-app:0.5 tar -C /app/deploy -cf - . | tar -xf -
 ls -a          # ได้ docker-compose.yml  Caddyfile  Caddyfile.auth  .env.example
 cp .env.example .env
 chmod 600 .env
@@ -171,7 +171,7 @@ nano .env
 | `ALERT_WEBHOOK_URL` | ไม่บังคับ: แจ้งเตือนเข้า Discord / Slack / Teams / Google Chat |
 | `HTTP_PORT`, `HTTPS_PORT`, `APP_IMAGE`, `OCR_IMAGE`, `EMBED_*` | เว้นตามค่าเดิม |
 
-`COMPOSE_PROFILES` บอก compose ว่าจะเปิด container ไหนเพิ่ม (`ocr`, `db`) · ตั้งครั้งเดียว ทุกคำสั่งหลังจากนี้เป็น `docker compose ...` เฉย ๆ
+`COMPOSE_PROFILES` บอก compose ว่าจะเปิด container ไหนเพิ่ม (`ocr` = container `ocr`, `localdb` = container `db`) · ตั้งครั้งเดียว ทุกคำสั่งหลังจากนี้เป็น `docker compose ...` เฉย ๆ
 ไม่ใช้ OCR: ลบ `ocr` ออกจาก `COMPOSE_PROFILES` และเว้น `OCR_URL` ว่าง (PDF ที่มีข้อความในไฟล์ยังอ่านได้ แค่หน้าสแกนอ่านไม่ได้)
 
 ## ขั้นที่ 6: เปิดระบบ
@@ -252,12 +252,12 @@ docker compose cp web:/app/data/backup.db ./backup-$(date +%F).db
 ### อัปเดตเป็นรุ่นใหม่
 
 ข้อมูลใน volume และฐานข้อมูลไม่หาย · `.env` เดิมใช้ต่อได้ (ถ้าเคยตั้ง `APP_IMAGE`/`OCR_IMAGE` ไว้ ให้ลบออกหรือแก้เป็นรุ่นใหม่)
-แทน `0.4` ด้วยรุ่นที่ได้รับแจ้ง:
+แทน `0.5` ด้วยรุ่นที่ได้รับแจ้ง:
 
 ```bash
 cd competitor
 cp .env .env.backup
-docker run --rm quix07/competitor-app:0.4 tar -C /app/deploy -cf - docker-compose.yml Caddyfile Caddyfile.auth .env.example | tar -xf -
+docker run --rm quix07/competitor-app:0.5 tar -C /app/deploy -cf - docker-compose.yml Caddyfile Caddyfile.auth .env.example | tar -xf -
 docker compose pull
 docker compose up -d
 ```
@@ -276,7 +276,7 @@ docker compose restart web worker
 
 ### ต้องการโค้ดไปแก้ต่อ
 
-โค้ดทั้งแอปอยู่ใน image ที่ `/app`: `docker run --rm quix07/competitor-app:0.4 tar -C /app --exclude=./data -cf - . | tar -xf -`
+โค้ดทั้งแอปอยู่ใน image ที่ `/app`: `docker run --rm quix07/competitor-app:0.5 tar -C /app --exclude=./data -cf - . | tar -xf -`
 
 ## ปัญหาที่เจอบ่อย
 

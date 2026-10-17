@@ -35,7 +35,7 @@ USER root
 
 COPY . .
 # ชุดไฟล์ตั้งค่าสำหรับขึ้นเซิร์ฟเวอร์ (compose, Caddyfile, .env.example) ให้ดึงออกจาก image ได้โดยไม่ต้องมีโค้ด · คู่มือ DEPLOY.md ไม่อยู่ใน image (ส่งแยก)
-# compose ชี้ไป image รุ่นเดียวกับที่ build: docker build --build-arg VERSION=0.4 -t quix07/competitor-app:0.4 .
+# compose ชี้ไป image รุ่นเดียวกับที่ build: docker build --build-arg VERSION=0.5 -t quix07/competitor-app:0.5 .
 ARG VERSION=latest
 RUN sed -i "s/__VERSION__/${VERSION}/g" deploy/docker-compose.yml \
  && cp .env.example deploy/
